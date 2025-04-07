@@ -1,0 +1,32 @@
+# Ignore Maven build directories
+target/
+
+# Ignore IDEs (IntelliJ IDEA, Eclipse, etc.)
+.idea/
+*.iml
+*.classpath
+*.project
+.settings/
+
+# Ignore log files
+*.log
+
+# Ignore dependency directories
+/.m2/
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Ignore JAR and WAR files
+*.jar
+*.war
+*.ear
+
+# Ignore application configuration files
+application.properties
+application.yml
+
+# Ignore compiled classes and package files
+*.class
+

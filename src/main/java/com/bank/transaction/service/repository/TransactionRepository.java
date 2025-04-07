@@ -1,0 +1,23 @@
+package com.bank.transaction.service.repository;
+
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+
+import com.bank.transaction.service.entity.Transaction;
+
+import reactor.core.publisher.Flux;
+
+public interface TransactionRepository extends ReactiveCrudRepository<Transaction, String>{
+	// Encuentra todas las transacciones de una cuenta bancaria
+    Flux<Transaction> findByAccountNumber(String accountNumber);
+
+    // Encuentra todas las transacciones de un crédito específico
+    Flux<Transaction> findByCreditId(String creditId);
+
+    // Encuentra las transacciones de acuerdo con el tipo (DEPOSIT, WITHDRAWAL, PAYMENT)
+    Flux<Transaction> findByType(String type);
+
+    // Encuentra las transacciones por tipo y número de cuenta
+    Flux<Transaction> findByTypeAndAccountNumber(String type, String accountNumber);
+    
+    Flux<Transaction> findByAccountNumberAndProductType(String accountNumber, String productType);
+}
