@@ -1,10 +1,19 @@
 package com.bank.transaction.service.controllers;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
+import com.bank.transaction.service.dto.CommissionReportResponse;
 import com.bank.transaction.service.dto.TransactionRequest;
 import com.bank.transaction.service.dto.TransactionResponse;
+import com.bank.transaction.service.dto.TransferRequest;
 import com.bank.transaction.service.entity.Transaction;
 import com.bank.transaction.service.service.TransactionService;
 
@@ -24,12 +33,18 @@ public class TransactionController {
     }
 
     @PostMapping("/withdraw")
-    public Mono<Transaction> withdraw(@RequestBody Transaction transaction) {
+    public Mono<TransactionResponse> withdraw(@RequestBody Transaction transaction) {
         return transactionService.withdraw(transaction);
     }
 
     @PostMapping("/pay-credit")
-    public Mono<Transaction> payCredit(@RequestBody Transaction transaction) {
+    public Mono<TransactionResponse> payCredit(@RequestBody Transaction transaction) {
+        // Validar que el creditId esté presente en la transacción
+        if (transaction.getCreditId() == null || transaction.getCreditId().isEmpty()) {
+            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Credit ID is required for credit payments"));
+        }
+
+        // Delegar la lógica al service, que gestionará la comisión y demás
         return transactionService.payCredit(transaction);
     }
 
@@ -51,6 +66,19 @@ public class TransactionController {
     @GetMapping("/movements/credit/{creditNumber}")
     public Flux<TransactionResponse> getCreditMovements(@PathVariable String creditNumber) {
         return transactionService.getMovementsByCredit(creditNumber);
+    }
+    
+    @PostMapping("/transfer")
+    public Mono<TransactionResponse> transfer(@RequestBody TransferRequest transferRequest) {
+        return transactionService.transfer(transferRequest);
+    }
+    
+    @GetMapping("/commission-report")
+    public Flux<CommissionReportResponse> getCommissionReport(
+            @RequestParam("start") @DateTimeFormat(pattern = "dd-MM-yyyy") LocalDate start,
+            @RequestParam("end") @DateTimeFormat(pattern = "dd-MM-yyyy") LocalDate end) {
+
+        return transactionService.getCommissionReport(start, end);
     }
     
 }

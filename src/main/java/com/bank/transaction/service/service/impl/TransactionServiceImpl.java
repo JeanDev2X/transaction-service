@@ -1,22 +1,27 @@
 package com.bank.transaction.service.service.impl;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.temporal.TemporalAdjusters;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
-
+import java.math.BigDecimal;
 import com.bank.transaction.service.entity.Transaction;
 import com.bank.transaction.service.repository.TransactionRepository;
 import com.bank.transaction.service.service.TransactionService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import com.bank.transaction.service.dto.AccountResponse;
+import com.bank.transaction.service.dto.CommissionReportResponse;
 import com.bank.transaction.service.dto.CreditResponse;
 import com.bank.transaction.service.dto.TransactionRequest;
 import com.bank.transaction.service.dto.TransactionResponse;
+import com.bank.transaction.service.dto.TransferRequest;
 
 @Service
 public class TransactionServiceImpl implements TransactionService{
@@ -25,124 +30,217 @@ public class TransactionServiceImpl implements TransactionService{
 	private WebClient.Builder webClientBuilder;
 	
 	private static final String ACCOUNT_SERVICE_URL = "http://localhost:8021/accounts";
+	//en el metodo, paycredit, falta implementar la actualizacion de la cuenta de credito
 	private static final String CREDIT_SERVICE_URL = "http://localhost:8022/credits";
+	
+	private static final int MAX_FREE_TRANSACTIONS = 5;
+	private static final BigDecimal COMMISSION_AMOUNT = new BigDecimal("1.50");
 	
 	@Autowired
     private TransactionRepository transactionRepository;
 
 	@Override
 	public Mono<TransactionResponse> deposit(TransactionRequest transactionRequest) {
-	    WebClient webClient = webClientBuilder.build();
+		WebClient webClient = webClientBuilder.build();
 
-	    // Obtener la cuenta desde Account-Service usando el número de cuenta
-	    return webClient
-	            .get()
-	            .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
-	            .retrieve()
-	            .bodyToMono(AccountResponse.class)  // Usamos AccountResponse en vez de Account
-	            .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
-	            .flatMap(accountResponse -> {
-	                // Actualizamos el saldo de la cuenta
-	                accountResponse.setBalance(accountResponse.getBalance().add(transactionRequest.getAmount()));
+	    return transactionRepository.countByAccountNumberAndDateBetween(
+	            transactionRequest.getAccountNumber(),
+	            getStartOfMonth(),
+	            getEndOfMonth()
+	        )
+	        .flatMap(transactionCount -> {
+	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
 
-	                // Actualizar la cuenta en Account-Service
-	                return webClient
-	                        .put()
-	                        .uri(ACCOUNT_SERVICE_URL + "/{id}", accountResponse.getId())
-	                        .bodyValue(accountResponse)
-	                        .retrieve()
-	                        .bodyToMono(AccountResponse.class);
-	            })
-	            .flatMap(updatedAccount -> {
-	                // Guardar la transacción en Transaction-Service
-	                Transaction transaction = new Transaction();
-	                transaction.setType("DEPOSIT");
-	                transaction.setProductType("ACCOUNT");
-	                transaction.setAmount(transactionRequest.getAmount());
-	                transaction.setAccountNumber(transactionRequest.getAccountNumber());
-	                transaction.setDate(LocalDateTime.now());
+	            return webClient
+	                    .get()
+	                    .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                    .retrieve()
+	                    .bodyToMono(AccountResponse.class)
+	                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                    .flatMap(accountResponse -> {
+	                        // Calcular el monto final después de aplicar la comisión (si la hay)
+	                        BigDecimal finalAmount = transactionRequest.getAmount().subtract(commission);
 
-	                return transactionRepository.save(transaction)
-	                        .map(savedTransaction -> {
-	                            // Retornar la respuesta de la transacción
-	                            return new TransactionResponse(
-	                                    savedTransaction.getId(),
-	                                    savedTransaction.getAccountNumber(),
-	                                    savedTransaction.getType(),
-	                                    savedTransaction.getAmount(),
-	                                    savedTransaction.getDate()
-	                            );
-	                        });
-	            });
+	                        accountResponse.setBalance(accountResponse.getBalance().add(finalAmount));
+
+	                        // Actualizar saldo
+	                        return webClient
+	                                .put()
+	                                .uri(ACCOUNT_SERVICE_URL + "/{id}", accountResponse.getId())
+	                                .bodyValue(accountResponse)
+	                                .retrieve()
+	                                .bodyToMono(AccountResponse.class)
+	                                .flatMap(updatedAccount -> {
+	                                    // Guardar transacción
+	                                    Transaction transaction = new Transaction();
+	                                    transaction.setType("DEPOSIT");
+	                                    transaction.setProductType("ACCOUNT");
+	                                    transaction.setAmount(transactionRequest.getAmount());
+	                                    transaction.setCommission(commission);
+	                                    transaction.setAccountNumber(transactionRequest.getAccountNumber());
+	                                    transaction.setDate(LocalDateTime.now());
+
+	                                    return transactionRepository.save(transaction)
+	                                            .map(savedTransaction -> new TransactionResponse(
+	                                                    savedTransaction.getId(),
+	                                                    savedTransaction.getAccountNumber(),
+	                                                    savedTransaction.getType(),
+	                                                    savedTransaction.getProductType(),
+	                                                    savedTransaction.getAmount(),
+	                                                    savedTransaction.getDate(),
+	                                                    savedTransaction.getCommission(),
+	                                                    savedTransaction.getSourceAccountNumber(),
+	                                                    savedTransaction.getDestinationAccountNumber()
+	                                            ));
+	                                });
+	                    });
+	        });
 	}
 
 	@Override
-	public Mono<Transaction> withdraw(Transaction transaction) {
-	    WebClient webClient = webClientBuilder.build();
+	public Mono<TransactionResponse> withdraw(Transaction transactionRequest) {
+		WebClient webClient = webClientBuilder.build();
 
-	    // Buscar cuenta por número de cuenta
-	    return webClient
-	            .get()
-	            .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transaction.getAccountNumber())
-	            .retrieve()
-	            .bodyToMono(AccountResponse.class)
-	            .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Cuenta no encontrada")))
-	            .flatMap(account -> {
-	                if (account.getBalance().compareTo(transaction.getAmount()) < 0) {
-	                    return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saldo insuficiente"));
-	                }
+	    return transactionRepository.countByAccountNumberAndDateBetween(
+	            transactionRequest.getAccountNumber(),
+	            getStartOfMonth(),
+	            getEndOfMonth()
+	        )
+	        .flatMap(transactionCount -> {
+	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
 
-	                // Restar el monto del balance
-	                account.setBalance(account.getBalance().subtract(transaction.getAmount()));
+	            return webClient
+	                    .get()
+	                    .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                    .retrieve()
+	                    .bodyToMono(AccountResponse.class)
+	                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                    .flatMap(account -> {
+	                        BigDecimal finalAmount = transactionRequest.getAmount().add(commission); // retirar más si hay comisión
 
-	                // Actualizar cuenta en Account Service
-	                return webClient
+	                        if (account.getBalance().compareTo(finalAmount) < 0) {
+	                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
+	                        }
+
+	                        account.setBalance(account.getBalance().subtract(finalAmount));
+
+	                        return webClient
+	                                .put()
+	                                .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                                .bodyValue(account)
+	                                .retrieve()
+	                                .bodyToMono(AccountResponse.class)
+	                                .flatMap(updatedAccount -> {
+	                                    transactionRequest.setType("WITHDRAW");
+	                                    transactionRequest.setProductType("ACCOUNT");
+	                                    transactionRequest.setDate(LocalDateTime.now());
+	                                    transactionRequest.setCommission(commission);
+
+	                                    return transactionRepository.save(transactionRequest)
+	                                            .map(savedTransaction -> new TransactionResponse(
+	                                                    savedTransaction.getId(),
+	                                                    savedTransaction.getAccountNumber(),
+	                                                    savedTransaction.getType(),
+	                                                    savedTransaction.getProductType(),
+	                                                    savedTransaction.getAmount(),
+	                                                    savedTransaction.getDate(),
+	                                                    savedTransaction.getCommission(),
+	                                                    savedTransaction.getSourceAccountNumber(),
+	                                                    savedTransaction.getDestinationAccountNumber()
+	                                            ));
+	                                });
+	                    });
+	        });
+	}
+
+	@Override
+	public Mono<TransactionResponse> payCredit(Transaction transactionRequest) {
+		WebClient webClient = webClientBuilder.build();
+	    
+	    // Validar que el creditId esté presente en la transacción
+	    if (transactionRequest.getCreditId() == null || transactionRequest.getCreditId().isEmpty()) {
+	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Credit ID is required for credit payments"));
+	    }
+
+	    // Contamos las transacciones realizadas este mes para verificar si se supera el límite sin comisión
+	    return transactionRepository.countByAccountNumberAndDateBetween(
+	            transactionRequest.getAccountNumber(),
+	            getStartOfMonth(),
+	            getEndOfMonth()
+	        )
+	        .flatMap(transactionCount -> {
+	            // Si superó el límite, aplicamos la comisión
+	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+
+	            // Obtener la cuenta bancaria asociada para verificar saldo
+	            return webClient
+	                .get()
+	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                .retrieve()
+	                .bodyToMono(AccountResponse.class)
+	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                .flatMap(account -> {
+	                    BigDecimal finalAmount = transactionRequest.getAmount().add(commission);
+
+	                    // Verificar si hay fondos suficientes en la cuenta bancaria para realizar el pago (con comisión si aplica)
+	                    if (account.getBalance().compareTo(finalAmount) < 0) {
+	                        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
+	                    }
+
+	                    // Debitar el monto del saldo de la cuenta bancaria
+	                    account.setBalance(account.getBalance().subtract(finalAmount));
+
+	                    // Actualizar la cuenta bancaria con el nuevo saldo
+	                    return webClient
 	                        .put()
 	                        .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
 	                        .bodyValue(account)
 	                        .retrieve()
-	                        .bodyToMono(AccountResponse.class);
-	            })
-	            .flatMap(updatedAccount -> {
-	                // Guardar la transacción
-	                transaction.setType("WITHDRAWAL");
-	                transaction.setProductType("ACCOUNT");
-	                transaction.setDate(LocalDateTime.now());
-	                return transactionRepository.save(transaction);
-	            });
-	}
+	                        .bodyToMono(AccountResponse.class)
+	                        .flatMap(updatedAccount -> {
+	                            // Aquí se realiza la conexión al servicio de créditos para actualizar el saldo del crédito
+	                            return webClient
+	                                .get()
+	                                .uri(CREDIT_SERVICE_URL + "/by-credit-number/{creditId}", transactionRequest.getCreditId())
+	                                .retrieve()
+	                                .bodyToMono(CreditResponse.class)
+	                                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Credit not found")))
+	                                .flatMap(creditResponse -> {
+	                                    // Reducir el saldo del crédito por el monto de la transacción
+	                                    creditResponse.setBalance(creditResponse.getBalance().subtract(transactionRequest.getAmount()));
 
-	@Override
-	public Mono<Transaction> payCredit(Transaction transaction) {
-	    WebClient webClient = webClientBuilder.build();
+	                                    // Actualizar el crédito en el servicio de créditos
+	                                    return webClient
+	                                        .put()
+	                                        .uri(CREDIT_SERVICE_URL + "/{id}", creditResponse.getId())
+	                                        .bodyValue(creditResponse)
+	                                        .retrieve()
+	                                        .bodyToMono(CreditResponse.class)
+	                                        .flatMap(updatedCredit -> {
+	                                            // Guardamos la transacción en el repositorio de transacciones
+	                                            transactionRequest.setType("CREDIT_PAYMENT");
+	                                            transactionRequest.setProductType("CREDIT");
+	                                            transactionRequest.setDate(LocalDateTime.now());
+	                                            transactionRequest.setCommission(commission);
 
-	    // Obtener el crédito desde Credit-Service usando el ID (puedes cambiar a creditNumber si lo prefieres)
-	    return webClient
-	            .get()
-	            .uri(CREDIT_SERVICE_URL + "/by-credit-number/{creditNumber}", transaction.getAccountNumber()) // Usa creditId aquí, no accountNumber
-	            .retrieve()
-	            .bodyToMono(CreditResponse.class)
-	            .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Crédito no encontrado")))
-	            .flatMap(credit -> {
-	                // Simulamos el pago disminuyendo el saldo adeudado
-	                credit.setBalance(credit.getBalance().subtract(transaction.getAmount()));
-
-	                // Actualizar el crédito en Credit-Service
-	                return webClient
-	                        .put()
-	                        .uri(CREDIT_SERVICE_URL + "/{id}", credit.getId())
-	                        .bodyValue(credit)
-	                        .retrieve()
-	                        .bodyToMono(CreditResponse.class);
-	            })
-	            .flatMap(updatedCredit -> {
-	                // Guardar la transacción
-	                transaction.setType("PAYMENT");
-	                transaction.setProductType("CREDIT");
-	                transaction.setDate(LocalDateTime.now());
-
-	                return transactionRepository.save(transaction);
-	            });
+	                                            // Guardamos la transacción en el repositorio de transacciones
+	                                            return transactionRepository.save(transactionRequest)
+	                                                .map(savedTransaction -> new TransactionResponse(
+	                                                    savedTransaction.getId(),
+	                                                    savedTransaction.getAccountNumber(),
+	                                                    savedTransaction.getType(),
+	                                                    savedTransaction.getProductType(),
+	                                                    savedTransaction.getAmount(),
+	                                                    savedTransaction.getDate(),
+	                                                    savedTransaction.getCommission(), // Aseguramos que se guarde la comisión aplicada
+	                                                    savedTransaction.getSourceAccountNumber(),
+	                                                    savedTransaction.getDestinationAccountNumber()
+	                                                ));
+	                                        });
+	                                });
+	                        });
+	                });
+	        });
 	}
 	
 //	@Override
@@ -181,4 +279,109 @@ public class TransactionServiceImpl implements TransactionService{
         return response;
     }
 
+    private LocalDateTime getStartOfMonth() {
+        return LocalDate.now().withDayOfMonth(1).atStartOfDay();
+    }
+
+    private LocalDateTime getEndOfMonth() {
+        return LocalDate.now().with(TemporalAdjusters.lastDayOfMonth()).atTime(LocalTime.MAX);
+    }
+    
+    @Override
+    public Mono<TransactionResponse> transfer(TransferRequest transferRequest) {
+    	WebClient webClient = webClientBuilder.build();
+
+        if (transferRequest.getSourceAccountNumber() == null || transferRequest.getDestinationAccountNumber() == null) {
+            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Both source and destination account numbers are required"));
+        }
+
+        return transactionRepository.countByAccountNumberAndDateBetween(
+                transferRequest.getSourceAccountNumber(),
+                getStartOfMonth(),
+                getEndOfMonth()
+            )
+            .flatMap(transactionCount -> {
+                BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+                BigDecimal totalAmount = transferRequest.getAmount().add(commission);
+
+                // Obtener cuentas origen y destino
+                Mono<AccountResponse> sourceAccountMono = webClient
+                        .get()
+                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transferRequest.getSourceAccountNumber())
+                        .retrieve()
+                        .bodyToMono(AccountResponse.class);
+
+                Mono<AccountResponse> destinationAccountMono = webClient
+                        .get()
+                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transferRequest.getDestinationAccountNumber())
+                        .retrieve()
+                        .bodyToMono(AccountResponse.class);
+
+                return Mono.zip(sourceAccountMono, destinationAccountMono)
+                    .flatMap(tuple -> {
+                        AccountResponse sourceAccount = tuple.getT1();
+                        AccountResponse destinationAccount = tuple.getT2();
+
+                        if (sourceAccount.getBalance().compareTo(totalAmount) < 0) {
+                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds in source account"));
+                        }
+
+                        // Actualizar saldos
+                        sourceAccount.setBalance(sourceAccount.getBalance().subtract(totalAmount));
+                        destinationAccount.setBalance(destinationAccount.getBalance().add(transferRequest.getAmount()));
+
+                        // Actualizar cuentas
+                        return webClient
+                                .put()
+                                .uri(ACCOUNT_SERVICE_URL + "/{id}", sourceAccount.getId())
+                                .bodyValue(sourceAccount)
+                                .retrieve()
+                                .bodyToMono(AccountResponse.class)
+                                .flatMap(updatedSource -> webClient
+                                    .put()
+                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", destinationAccount.getId())
+                                    .bodyValue(destinationAccount)
+                                    .retrieve()
+                                    .bodyToMono(AccountResponse.class)
+                                )
+                                .flatMap(updatedDestination -> {
+                                    Transaction transaction = new Transaction();
+                                    transaction.setType("TRANSFER");
+                                    transaction.setProductType("ACCOUNT");
+                                    transaction.setAmount(transferRequest.getAmount());
+                                    transaction.setSourceAccountNumber(transferRequest.getSourceAccountNumber());
+                                    transaction.setDestinationAccountNumber(transferRequest.getDestinationAccountNumber());
+                                    transaction.setCommission(commission);
+                                    transaction.setDate(LocalDateTime.now());
+
+                                    return transactionRepository.save(transaction)
+                                            .map(savedTransaction -> new TransactionResponse(
+                                                    savedTransaction.getId(),
+                                                    savedTransaction.getAccountNumber(),
+                                                    savedTransaction.getType(),
+                                                    savedTransaction.getProductType(),
+                                                    savedTransaction.getAmount(),
+                                                    savedTransaction.getDate(),
+                                                    savedTransaction.getCommission(),
+                                                    savedTransaction.getSourceAccountNumber(),
+                                                    savedTransaction.getDestinationAccountNumber()
+                                            ));
+                                });
+                    });
+            });
+    }
+    
+    @Override
+    public Flux<CommissionReportResponse> getCommissionReport(LocalDate startDate, LocalDate endDate) {
+        return transactionRepository.findByDateBetween(startDate, endDate)
+                .filter(tx -> tx.getCommission() != null && tx.getCommission().compareTo(BigDecimal.ZERO) > 0)
+                .groupBy(Transaction::getProductType)
+                .flatMap(groupedFlux -> groupedFlux
+                    .map(Transaction::getCommission)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .map(total -> new CommissionReportResponse(groupedFlux.key(), total))
+                );
+    }
+
+    
 }

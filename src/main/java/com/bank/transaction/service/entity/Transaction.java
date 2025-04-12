@@ -7,9 +7,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Document(collection = "transactions")
-@Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Data
 @Builder
 public class Transaction {
 	@Id
@@ -20,4 +20,7 @@ public class Transaction {
     private BigDecimal amount; // Monto de la transacción
     private String creditId; // En caso de ser una transacción de pago de crédito, se usa el ID del crédito
     private LocalDateTime date = LocalDateTime.now(); // Fecha de la transacción
+    private BigDecimal commission;
+    private String sourceAccountNumber;
+    private String destinationAccountNumber;
 }

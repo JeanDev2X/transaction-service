@@ -9,12 +9,6 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
-
-import com.bank.transaction.service.entity.OperacionCuentaBanco;
-import com.bank.transaction.service.entity.TipoOperacionBanco;
-import com.bank.transaction.service.service.OperacionBancoService;
-import com.bank.transaction.service.service.TipoOperacionBancoService;
-
 import reactor.core.publisher.Flux;
 
 @SpringBootApplication
