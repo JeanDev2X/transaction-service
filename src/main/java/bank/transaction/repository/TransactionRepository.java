@@ -1,12 +1,11 @@
-package com.bank.transaction.service.repository;
+package bank.transaction.repository;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 
-import com.bank.transaction.service.entity.Transaction;
-
+import bank.transaction.entity.Transaction;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
