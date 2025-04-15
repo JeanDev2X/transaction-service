@@ -1,4 +1,4 @@
-package com.bank.transaction.service.entity;
+package bank.transaction.entity;
 
 import lombok.*;
 import org.springframework.data.annotation.Id;

@@ -1,4 +1,4 @@
-package com.bank.transaction.service.controllers;
+package bank.transaction.controllers;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -10,13 +10,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.bank.transaction.service.dto.CommissionReportResponse;
-import com.bank.transaction.service.dto.TransactionRequest;
-import com.bank.transaction.service.dto.TransactionResponse;
-import com.bank.transaction.service.dto.TransferRequest;
-import com.bank.transaction.service.entity.Transaction;
-import com.bank.transaction.service.service.TransactionService;
-
+import bank.transaction.dto.CommissionReportResponse;
+import bank.transaction.dto.TransactionRequest;
+import bank.transaction.dto.TransactionResponse;
+import bank.transaction.dto.TransferRequest;
+import bank.transaction.entity.Transaction;
+import bank.transaction.service.TransactionService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 

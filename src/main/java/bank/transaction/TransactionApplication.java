@@ -1,4 +1,4 @@
-package com.bank.transaction.service;
+package bank.transaction;
 
 import java.util.Date;
 
