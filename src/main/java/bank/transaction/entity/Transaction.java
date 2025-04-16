@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Data
 @Builder
+@ToString
 public class Transaction {
 	@Id
     private String id;
@@ -18,7 +19,7 @@ public class Transaction {
     private String productType; // Tipo de producto: "ACCOUNT" o "CREDIT"
     private String type; // Tipo de transacción: "DEPOSIT", "WITHDRAWAL", "PAYMENT"
     private BigDecimal amount; // Monto de la transacción
-    private String creditId; // En caso de ser una transacción de pago de crédito, se usa el ID del crédito
+    private String creditNumber; // En caso de ser una transacción de pago de crédito, se usa el ID del crédito
     private LocalDateTime date = LocalDateTime.now(); // Fecha de la transacción
     private BigDecimal commission;
     private String sourceAccountNumber;

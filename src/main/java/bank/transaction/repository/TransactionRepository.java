@@ -14,7 +14,7 @@ public interface TransactionRepository extends ReactiveCrudRepository<Transactio
     Flux<Transaction> findByAccountNumber(String accountNumber);
 
     // Encuentra todas las transacciones de un crédito específico
-    Flux<Transaction> findByCreditId(String creditId);
+    Flux<Transaction> findByCreditNumber(String creditNumber);
 
     // Encuentra las transacciones de acuerdo con el tipo (DEPOSIT, WITHDRAWAL, PAYMENT)
     Flux<Transaction> findByType(String type);

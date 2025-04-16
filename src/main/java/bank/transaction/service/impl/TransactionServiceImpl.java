@@ -34,7 +34,7 @@ public class TransactionServiceImpl implements TransactionService{
 	
 	private static final String ACCOUNT_SERVICE_URL = "http://localhost:8021/accounts";
 	//en el metodo, paycredit, falta implementar la actualizacion de la cuenta de credito
-	private static final String CREDIT_SERVICE_URL = "http://localhost:8022/credits";
+	private static final String CREDIT_SERVICE_URL = "http://localhost:8022/loans";
 	
 	private static final int MAX_FREE_TRANSACTIONS = 5;
 	private static final BigDecimal COMMISSION_AMOUNT = new BigDecimal("1.50");
@@ -159,9 +159,9 @@ public class TransactionServiceImpl implements TransactionService{
 	@Override
 	public Mono<TransactionResponse> payCredit(Transaction transactionRequest) {
 		WebClient webClient = webClientBuilder.build();
-	    
-	    // Validar que el creditId esté presente en la transacción
-	    if (transactionRequest.getCreditId() == null || transactionRequest.getCreditId().isEmpty()) {
+	    System.out.println("numero de credito = "+transactionRequest.getCreditNumber());
+	    // Validar que el creditNumber esté presente en la transacción
+	    if (transactionRequest.getCreditNumber() == null || transactionRequest.getCreditNumber().isEmpty()) {
 	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Credit ID is required for credit payments"));
 	    }
 
@@ -201,21 +201,24 @@ public class TransactionServiceImpl implements TransactionService{
 	                        .retrieve()
 	                        .bodyToMono(AccountResponse.class)
 	                        .flatMap(updatedAccount -> {
+	                        	System.out.println("numero de credito = "+transactionRequest.getCreditNumber());
 	                            // Aquí se realiza la conexión al servicio de créditos para actualizar el saldo del crédito
 	                            return webClient
 	                                .get()
-	                                .uri(CREDIT_SERVICE_URL + "/by-credit-number/{creditId}", transactionRequest.getCreditId())
+	                                .uri(CREDIT_SERVICE_URL + "/{creditNumber}", transactionRequest.getCreditNumber())
 	                                .retrieve()
 	                                .bodyToMono(CreditResponse.class)
 	                                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Credit not found")))
 	                                .flatMap(creditResponse -> {
+	                                	
 	                                    // Reducir el saldo del crédito por el monto de la transacción
 	                                    creditResponse.setBalance(creditResponse.getBalance().subtract(transactionRequest.getAmount()));
 
 	                                    // Actualizar el crédito en el servicio de créditos
 	                                    return webClient
-	                                        .put()
-	                                        .uri(CREDIT_SERVICE_URL + "/{id}", creditResponse.getId())
+	                                    		.post()
+	                                        .uri(CREDIT_SERVICE_URL + "/{creditNumber}/pay?amount=" + transactionRequest.getAmount(),
+	                                                transactionRequest.getCreditNumber())
 	                                        .bodyValue(creditResponse)
 	                                        .retrieve()
 	                                        .bodyToMono(CreditResponse.class)

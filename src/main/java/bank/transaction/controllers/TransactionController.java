@@ -38,8 +38,10 @@ public class TransactionController {
 
     @PostMapping("/pay-credit")
     public Mono<TransactionResponse> payCredit(@RequestBody Transaction transaction) {
-        // Validar que el creditId esté presente en la transacción
-        if (transaction.getCreditId() == null || transaction.getCreditId().isEmpty()) {
+        // Validar que el creditNumber esté presente en la transacción
+    	System.out.println("numero de credito = "+transaction.getCreditNumber());
+    	System.out.println("transaction = "+transaction);
+        if (transaction.getCreditNumber() == null || transaction.getCreditNumber().isEmpty()) {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Credit ID is required for credit payments"));
         }
 
