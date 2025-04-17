@@ -3,6 +3,7 @@ package bank.transaction.controllers;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -85,6 +86,15 @@ public class TransactionController {
             @RequestParam("end") @DateTimeFormat(pattern = "dd-MM-yyyy") LocalDate end) {
 
         return transactionService.getCommissionReport(start, end);
+    }
+    
+    @GetMapping("/by-product-and-date")
+    public Mono<List<TransactionResponse>> getByProductAndDateRange(
+            @RequestParam String productType,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+
+        return transactionService.getTransactionsByProductTypeAndDateRange(productType, startDate, endDate);
     }
     
 }
