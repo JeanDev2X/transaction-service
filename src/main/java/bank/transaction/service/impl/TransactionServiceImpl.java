@@ -224,7 +224,7 @@ public class TransactionServiceImpl implements TransactionService{
 	                                        .bodyToMono(CreditResponse.class)
 	                                        .flatMap(updatedCredit -> {
 	                                            // Guardamos la transacción en el repositorio de transacciones
-	                                            transactionRequest.setType("CREDIT_PAYMENT");
+	                                            transactionRequest.setType("PAYMENT");
 	                                            transactionRequest.setProductType("CREDIT");
 	                                            transactionRequest.setDate(LocalDateTime.now());
 	                                            transactionRequest.setCommission(commission);
@@ -243,6 +243,75 @@ public class TransactionServiceImpl implements TransactionService{
 	                                                    savedTransaction.getDestinationAccountNumber()
 	                                                ));
 	                                        });
+	                                });
+	                        });
+	                });
+	        });
+	}
+	
+	@Override
+	public Mono<TransactionResponse> payCreditCard(Transaction transactionRequest) {
+	    WebClient webClient = webClientBuilder.build();
+
+	    if (transactionRequest.getCreditNumber() == null || transactionRequest.getCreditNumber().isEmpty()) {
+	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card number is required"));
+	    }
+
+	    return transactionRepository.countByAccountNumberAndDateBetween(
+	            transactionRequest.getAccountNumber(),
+	            getStartOfMonth(),
+	            getEndOfMonth()
+	        )
+	        .flatMap(transactionCount -> {
+	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+
+	            return webClient
+	                .get()
+	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                .retrieve()
+	                .bodyToMono(AccountResponse.class)
+	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                .flatMap(account -> {
+	                    BigDecimal finalAmount = transactionRequest.getAmount().add(commission);
+
+	                    if (account.getBalance().compareTo(finalAmount) < 0) {
+	                        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
+	                    }
+
+	                    account.setBalance(account.getBalance().subtract(finalAmount));
+
+	                    return webClient
+	                        .put()
+	                        .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                        .bodyValue(account)
+	                        .retrieve()
+	                        .bodyToMono(AccountResponse.class)
+	                        .flatMap(updatedAccount -> {
+	                            // Aquí se llama al endpoint del credit-service para pagar la tarjeta
+	                            return webClient
+	                                .post()
+	                                .uri(CREDIT_SERVICE_URL + "/credit-cards/" + transactionRequest.getCreditNumber() + "/pay?amount=" + transactionRequest.getAmount()
+	                                	)
+	                                .retrieve()
+	                                .bodyToMono(CreditResponse.class)
+	                                .flatMap(updatedCard -> {
+	                                    transactionRequest.setType("CREDIT_CARD_PAYMENT");
+	                                    transactionRequest.setProductType("CREDIT_CARD");
+	                                    transactionRequest.setDate(LocalDateTime.now());
+	                                    transactionRequest.setCommission(commission);
+
+	                                    return transactionRepository.save(transactionRequest)
+	                                        .map(savedTransaction -> new TransactionResponse(
+	                                            savedTransaction.getId(),
+	                                            savedTransaction.getAccountNumber(),
+	                                            savedTransaction.getType(),
+	                                            savedTransaction.getProductType(),
+	                                            savedTransaction.getAmount(),
+	                                            savedTransaction.getDate(),
+	                                            savedTransaction.getCommission(),
+	                                            savedTransaction.getSourceAccountNumber(),
+	                                            savedTransaction.getDestinationAccountNumber()
+	                                        ));
 	                                });
 	                        });
 	                });

@@ -48,6 +48,11 @@ public class TransactionController {
         // Delegar la lógica al service, que gestionará la comisión y demás
         return transactionService.payCredit(transaction);
     }
+    
+    @PostMapping("/pay-credit-card")
+    public Mono<TransactionResponse> payCreditCard(@RequestBody Transaction transactionRequest) {
+        return transactionService.payCreditCard(transactionRequest);
+    }
 
 //    @GetMapping("/balance/account/{accountNumber}")
 //    public Mono<BigDecimal> getAccountBalance(@PathVariable String accountNumber) {

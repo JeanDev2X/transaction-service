@@ -21,5 +21,5 @@ public interface TransactionService {
     Flux<TransactionResponse> getMovementsByCredit(String creditNumber);
     public Mono<TransactionResponse> transfer(TransferRequest transferRequest);
     Flux<CommissionReportResponse> getCommissionReport(LocalDate startDate, LocalDate endDate);
-
+    public Mono<TransactionResponse> payCreditCard(Transaction transactionRequest);
 }
