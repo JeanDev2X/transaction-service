@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.TemporalAdjusters;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -421,13 +422,14 @@ public class TransactionServiceImpl implements TransactionService{
                                 )
                                 .flatMap(updatedDestination -> {
                                     Transaction transaction = new Transaction();
-                                    transaction.setType("TRANSFER");
                                     transaction.setProductType("ACCOUNT");
+                                    transaction.setType("TRANSFER");
                                     transaction.setAmount(transferRequest.getAmount());
                                     transaction.setSourceAccountNumber(transferRequest.getSourceAccountNumber());
                                     transaction.setDestinationAccountNumber(transferRequest.getDestinationAccountNumber());
-                                    transaction.setCommission(commission);
                                     transaction.setDate(LocalDateTime.now());
+                                    transaction.setCommission(commission);
+                                    
 
                                     return transactionRepository.save(transaction)
                                             .map(savedTransaction -> new TransactionResponse(
@@ -458,5 +460,25 @@ public class TransactionServiceImpl implements TransactionService{
                 );
     }
 
+    @Override
+    public Mono<List<TransactionResponse>> getTransactionsByProductTypeAndDateRange(String productType, LocalDate startDate, LocalDate endDate) {
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = endDate.atTime(LocalTime.MAX);
+
+        return transactionRepository
+            .findByProductTypeAndDateBetween(productType.toUpperCase(), start, end)
+            .map(tx -> new TransactionResponse(
+                tx.getId(),
+                tx.getAccountNumber(),
+                tx.getType(),
+                tx.getProductType(),
+                tx.getAmount(),
+                tx.getDate(),
+                tx.getCommission(),
+                tx.getSourceAccountNumber(),
+                tx.getDestinationAccountNumber()
+            ))
+            .collectList();
+    }
     
 }

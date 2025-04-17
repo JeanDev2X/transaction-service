@@ -27,4 +27,6 @@ public interface TransactionRepository extends ReactiveCrudRepository<Transactio
     Mono<Long> countByAccountNumberAndDateBetween(String accountNumber, LocalDateTime start, LocalDateTime end);
     
     Flux<Transaction> findByDateBetween(LocalDate startDate, LocalDate endDate);
+    
+    Flux<Transaction> findByProductTypeAndDateBetween(String productType, LocalDateTime start, LocalDateTime end);
 }
