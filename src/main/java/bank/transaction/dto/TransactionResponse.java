@@ -20,4 +20,5 @@ public class TransactionResponse {
     private BigDecimal commission;
     private String sourceAccountNumber;
     private String destinationAccountNumber;
+    private String cardNumber;
 }

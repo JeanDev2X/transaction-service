@@ -12,4 +12,5 @@ import lombok.NoArgsConstructor;
 public class TransactionRequest {
 	private String accountNumber;  // El número de cuenta para realizar el depósito
     private BigDecimal amount;     // Monto a depositar
+    private String cardNumber;
 }
