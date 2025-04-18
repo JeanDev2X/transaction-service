@@ -2,6 +2,7 @@ package bank.transaction.repository;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 
@@ -29,4 +30,8 @@ public interface TransactionRepository extends ReactiveCrudRepository<Transactio
     Flux<Transaction> findByDateBetween(LocalDate startDate, LocalDate endDate);
     
     Flux<Transaction> findByProductTypeAndDateBetween(String productType, LocalDateTime start, LocalDateTime end);
+    
+    Flux<Transaction> findByAccountNumberInOrderByDateDesc(List<String> accountNumbers);
+    
+    Flux<Transaction> findByCardNumberOrderByDateDesc(String cardNumber);
 }

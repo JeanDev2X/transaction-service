@@ -24,4 +24,5 @@ public class Transaction {
     private BigDecimal commission;
     private String sourceAccountNumber;
     private String destinationAccountNumber;
+    private String cardNumber;// Número de tarjeta (crédito o débito)
 }

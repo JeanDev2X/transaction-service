@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import bank.transaction.dto.CommissionReportResponse;
+import bank.transaction.dto.DebitCardPaymentRequest;
+import bank.transaction.dto.TransactionDTO;
 import bank.transaction.dto.TransactionRequest;
 import bank.transaction.dto.TransactionResponse;
 import bank.transaction.dto.TransferRequest;
@@ -97,4 +99,13 @@ public class TransactionController {
         return transactionService.getTransactionsByProductTypeAndDateRange(productType, startDate, endDate);
     }
     
+    @PostMapping("/last-movements/by-cards")
+    public Flux<TransactionDTO> getLastMovementsByCardNumbers(@RequestBody List<String> cardNumbers) {
+        return transactionService.getLastMovementsByCardNumbers(cardNumbers);
+    }
+    
+    @PostMapping("/pay-debit-card")
+    public Mono<TransactionResponse> payWithDebitCard(@RequestBody DebitCardPaymentRequest request) {
+        return transactionService.payWithDebitCard(request);
+    }
 }

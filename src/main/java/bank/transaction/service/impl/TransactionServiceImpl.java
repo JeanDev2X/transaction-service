@@ -15,6 +15,9 @@ import org.springframework.web.server.ResponseStatusException;
 import bank.transaction.dto.AccountResponse;
 import bank.transaction.dto.CommissionReportResponse;
 import bank.transaction.dto.CreditResponse;
+import bank.transaction.dto.DebitCardDTO;
+import bank.transaction.dto.DebitCardPaymentRequest;
+import bank.transaction.dto.TransactionDTO;
 import bank.transaction.dto.TransactionRequest;
 import bank.transaction.dto.TransactionResponse;
 import bank.transaction.dto.TransferRequest;
@@ -34,7 +37,8 @@ public class TransactionServiceImpl implements TransactionService{
 	private WebClient.Builder webClientBuilder;
 	
 	private static final String ACCOUNT_SERVICE_URL = "http://localhost:8021/accounts";
-	//en el metodo, paycredit, falta implementar la actualizacion de la cuenta de credito
+	private static final String DEBIT_SERVICE_URL = "http://localhost:8021/debit-cards";
+	//en el metodo, paycredit, falta implementar la actualizacion de la cuenta de credito,validar
 	private static final String CREDIT_SERVICE_URL = "http://localhost:8022/loans";
 	
 	private static final int MAX_FREE_TRANSACTIONS = 5;
@@ -94,7 +98,8 @@ public class TransactionServiceImpl implements TransactionService{
 	                                                    savedTransaction.getDate(),
 	                                                    savedTransaction.getCommission(),
 	                                                    savedTransaction.getSourceAccountNumber(),
-	                                                    savedTransaction.getDestinationAccountNumber()
+	                                                    savedTransaction.getDestinationAccountNumber(),
+	                                                    savedTransaction.getCardNumber()
 	                                            ));
 	                                });
 	                    });
@@ -150,7 +155,8 @@ public class TransactionServiceImpl implements TransactionService{
 	                                                    savedTransaction.getDate(),
 	                                                    savedTransaction.getCommission(),
 	                                                    savedTransaction.getSourceAccountNumber(),
-	                                                    savedTransaction.getDestinationAccountNumber()
+	                                                    savedTransaction.getDestinationAccountNumber(),
+	                                                    savedTransaction.getCardNumber()
 	                                            ));
 	                                });
 	                    });
@@ -241,7 +247,8 @@ public class TransactionServiceImpl implements TransactionService{
 	                                                    savedTransaction.getDate(),
 	                                                    savedTransaction.getCommission(), // Aseguramos que se guarde la comisión aplicada
 	                                                    savedTransaction.getSourceAccountNumber(),
-	                                                    savedTransaction.getDestinationAccountNumber()
+	                                                    savedTransaction.getDestinationAccountNumber(),
+	                                                    savedTransaction.getCardNumber()
 	                                                ));
 	                                        });
 	                                });
@@ -300,6 +307,7 @@ public class TransactionServiceImpl implements TransactionService{
 	                                    transactionRequest.setProductType("CREDIT_CARD");
 	                                    transactionRequest.setDate(LocalDateTime.now());
 	                                    transactionRequest.setCommission(commission);
+	                                    transactionRequest.setCardNumber(transactionRequest.getCreditNumber());
 
 	                                    return transactionRepository.save(transactionRequest)
 	                                        .map(savedTransaction -> new TransactionResponse(
@@ -311,7 +319,8 @@ public class TransactionServiceImpl implements TransactionService{
 	                                            savedTransaction.getDate(),
 	                                            savedTransaction.getCommission(),
 	                                            savedTransaction.getSourceAccountNumber(),
-	                                            savedTransaction.getDestinationAccountNumber()
+	                                            savedTransaction.getDestinationAccountNumber(),
+	                                            savedTransaction.getCardNumber()
 	                                        ));
 	                                });
 	                        });
@@ -441,7 +450,8 @@ public class TransactionServiceImpl implements TransactionService{
                                                     savedTransaction.getDate(),
                                                     savedTransaction.getCommission(),
                                                     savedTransaction.getSourceAccountNumber(),
-                                                    savedTransaction.getDestinationAccountNumber()
+                                                    savedTransaction.getDestinationAccountNumber(),
+                                                    savedTransaction.getCardNumber()
                                             ));
                                 });
                     });
@@ -476,9 +486,95 @@ public class TransactionServiceImpl implements TransactionService{
                 tx.getDate(),
                 tx.getCommission(),
                 tx.getSourceAccountNumber(),
-                tx.getDestinationAccountNumber()
+                tx.getDestinationAccountNumber(),
+                tx.getCardNumber()
             ))
             .collectList();
     }
+
+	@Override
+	public Mono<TransactionResponse> payWithDebitCard(DebitCardPaymentRequest request) {
+		WebClient webClient = webClientBuilder.build();
+
+	    return webClient.get()
+	        .uri(DEBIT_SERVICE_URL + "/{cardNumber}", request.getCardNumber())
+	        .retrieve()
+	        .bodyToMono(DebitCardDTO.class)
+	        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Debit card not found")))
+	        .flatMap(card -> {
+	            if (card.getAccountNumber() == null || card.getAccountNumber().isEmpty()) {
+	                return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card not linked to account"));
+	            }
+
+	            return webClient.get()
+	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", card.getAccountNumber())
+	                .retrieve()
+	                .bodyToMono(AccountResponse.class)
+	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                .flatMap(account -> transactionRepository.countByAccountNumberAndDateBetween(
+	                        account.getAccountNumber(), getStartOfMonth(), getEndOfMonth())
+	                    .flatMap(txCount -> {
+	                        BigDecimal commission = txCount >= MAX_FREE_TRANSACTIONS ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+	                        BigDecimal total = request.getAmount().add(commission);
+
+	                        if (account.getBalance().compareTo(total) < 0) {
+	                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
+	                        }
+
+	                        account.setBalance(account.getBalance().subtract(total));
+
+	                        return webClient.put()
+	                            .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                            .bodyValue(account)
+	                            .retrieve()
+	                            .bodyToMono(AccountResponse.class)
+	                            .flatMap(updatedAccount -> {
+	                                Transaction tx = Transaction.builder()
+	                                        .accountNumber(account.getAccountNumber())
+	                                        .type("DEBIT_CARD_PAYMENT")
+	                                        .productType("ACCOUNT")
+	                                        .amount(request.getAmount())
+	                                        .commission(commission)
+	                                        .date(LocalDateTime.now())
+	                                        .cardNumber(request.getCardNumber()) // Aquí lo agregamos
+	                                        .build();
+
+	                                return transactionRepository.save(tx)
+	                                    .map(saved -> new TransactionResponse(
+	                                            saved.getId(),
+	                                            saved.getAccountNumber(),
+	                                            saved.getType(),
+	                                            saved.getProductType(),
+	                                            saved.getAmount(),
+	                                            saved.getDate(),
+	                                            saved.getCommission(),
+	                                            saved.getSourceAccountNumber(),
+	                                            saved.getDestinationAccountNumber(),
+	                                            saved.getCardNumber() // Agrega esta línea
+	                                    ));
+	                            });
+	                    }));
+	        });
+	}
+
+	@Override
+	public Flux<TransactionDTO> getLastMovementsByCardNumbers(List<String> cardNumbers) {
+		return Flux.fromIterable(cardNumbers)
+	            .flatMap(cardNumber -> transactionRepository.findByCardNumberOrderByDateDesc(cardNumber)
+	                    .take(10)) // Toma los 10 últimos por cada tarjeta
+	            .sort((tx1, tx2) -> tx2.getDate().compareTo(tx1.getDate())) // Ordena globalmente por fecha descendente
+	            .take(10) // Toma los últimos 10 en total (combinados)
+	            .map(tx -> new TransactionDTO(
+	                    tx.getAccountNumber(),
+	                    tx.getType(),
+	                    tx.getAmount(),
+	                    tx.getDate(),
+	                    tx.getCommission(),
+	                    tx.getProductType(),
+	                    tx.getSourceAccountNumber(),
+	                    tx.getDestinationAccountNumber(),
+	                    tx.getCardNumber()
+	            ));
+	}
     
 }
