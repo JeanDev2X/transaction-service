@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import bank.transaction.dto.CommissionReportResponse;
+import bank.transaction.dto.CreditPaymentRequest;
 import bank.transaction.dto.DebitCardPaymentRequest;
 import bank.transaction.dto.TransactionDTO;
 import bank.transaction.dto.TransactionRequest;
@@ -28,4 +29,5 @@ public interface TransactionService {
     Mono<List<TransactionResponse>> getTransactionsByProductTypeAndDateRange(String productType, LocalDate startDate, LocalDate endDate);
     public Mono<TransactionResponse> payWithDebitCard(DebitCardPaymentRequest request);
     Flux<TransactionDTO> getLastMovementsByCardNumbers(List<String> cardNumbers);
+    Mono<Transaction> processCreditPayment(CreditPaymentRequest request);
 }

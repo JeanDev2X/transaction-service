@@ -1,17 +1,22 @@
 package bank.transaction.controllers;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import bank.transaction.dto.CommissionReportResponse;
+import bank.transaction.dto.CreditPaymentRequest;
 import bank.transaction.dto.DebitCardPaymentRequest;
 import bank.transaction.dto.TransactionDTO;
 import bank.transaction.dto.TransactionRequest;
@@ -38,7 +43,7 @@ public class TransactionController {
     public Mono<TransactionResponse> withdraw(@RequestBody Transaction transaction) {
         return transactionService.withdraw(transaction);
     }
-
+    //pagar prestamo
     @PostMapping("/pay-credit")
     public Mono<TransactionResponse> payCredit(@RequestBody Transaction transaction) {
         // Validar que el creditNumber esté presente en la transacción
@@ -51,7 +56,7 @@ public class TransactionController {
         // Delegar la lógica al service, que gestionará la comisión y demás
         return transactionService.payCredit(transaction);
     }
-    
+    //pagar tarjeta
     @PostMapping("/pay-credit-card")
     public Mono<TransactionResponse> payCreditCard(@RequestBody Transaction transactionRequest) {
         return transactionService.payCreditCard(transactionRequest);
@@ -103,9 +108,15 @@ public class TransactionController {
     public Flux<TransactionDTO> getLastMovementsByCardNumbers(@RequestBody List<String> cardNumbers) {
         return transactionService.getLastMovementsByCardNumbers(cardNumbers);
     }
-    
+    //pagar con tarjeta de debito
     @PostMapping("/pay-debit-card")
     public Mono<TransactionResponse> payWithDebitCard(@RequestBody DebitCardPaymentRequest request) {
         return transactionService.payWithDebitCard(request);
     }
+    //pagar credito de terceros
+    @PostMapping("/credit-payment")
+    public Mono<Transaction> payCredit(@RequestBody CreditPaymentRequest request) {
+        return transactionService.processCreditPayment(request);
+    }
+    
 }

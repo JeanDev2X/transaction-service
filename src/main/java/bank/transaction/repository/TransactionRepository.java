@@ -1,12 +1,12 @@
 package bank.transaction.repository;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 
 import bank.transaction.entity.Transaction;
+import bank.transaction.entity.TransactionType;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -18,20 +18,20 @@ public interface TransactionRepository extends ReactiveCrudRepository<Transactio
     Flux<Transaction> findByCreditNumber(String creditNumber);
 
     // Encuentra las transacciones de acuerdo con el tipo (DEPOSIT, WITHDRAWAL, PAYMENT)
-    Flux<Transaction> findByType(String type);
+    Flux<Transaction> findByTransactionType(TransactionType transactionType);
 
     // Encuentra las transacciones por tipo y número de cuenta
-    Flux<Transaction> findByTypeAndAccountNumber(String type, String accountNumber);
+    Flux<Transaction> findByTransactionTypeAndAccountNumber(TransactionType transactionType, String accountNumber);
     
     Flux<Transaction> findByAccountNumberAndProductType(String accountNumber, String productType);
     
-    Mono<Long> countByAccountNumberAndDateBetween(String accountNumber, LocalDateTime start, LocalDateTime end);
+    Mono<Long> countByAccountNumberAndTransactionDateBetween(String accountNumber, LocalDate start, LocalDate end);
     
-    Flux<Transaction> findByDateBetween(LocalDate startDate, LocalDate endDate);
+    Flux<Transaction> findByTransactionDateBetween(LocalDate startDate, LocalDate endDate);
     
-    Flux<Transaction> findByProductTypeAndDateBetween(String productType, LocalDateTime start, LocalDateTime end);
+    Flux<Transaction> findByProductTypeAndTransactionDateBetween(String productType, LocalDate start, LocalDate end);
     
-    Flux<Transaction> findByAccountNumberInOrderByDateDesc(List<String> accountNumbers);
+    Flux<Transaction> findByAccountNumberInOrderByTransactionDateDesc(List<String> accountNumbers);
     
-    Flux<Transaction> findByCardNumberOrderByDateDesc(String cardNumber);
+    Flux<Transaction> findByCardNumberOrderByTransactionDateDesc(String cardNumber);
 }
