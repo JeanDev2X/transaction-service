@@ -1,8 +1,9 @@
 package bank.transaction.dto;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
+import bank.transaction.entity.TransactionType;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -12,9 +13,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TransactionDTO {
 	private String accountNumber;
-    private String type;
+	private TransactionType transactionType;
     private BigDecimal amount;
-    private LocalDateTime date;
+    private LocalDate date;
     private BigDecimal commission;
     private String productType;
     private String sourceAccountNumber;

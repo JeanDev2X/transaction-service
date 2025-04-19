@@ -14,14 +14,18 @@ import org.springframework.web.server.ResponseStatusException;
 
 import bank.transaction.dto.AccountResponse;
 import bank.transaction.dto.CommissionReportResponse;
+import bank.transaction.dto.CreditCardResponse;
+import bank.transaction.dto.CreditPaymentRequest;
 import bank.transaction.dto.CreditResponse;
 import bank.transaction.dto.DebitCardDTO;
 import bank.transaction.dto.DebitCardPaymentRequest;
+import bank.transaction.dto.LoanResponse;
 import bank.transaction.dto.TransactionDTO;
 import bank.transaction.dto.TransactionRequest;
 import bank.transaction.dto.TransactionResponse;
 import bank.transaction.dto.TransferRequest;
 import bank.transaction.entity.Transaction;
+import bank.transaction.entity.TransactionType;
 import bank.transaction.repository.TransactionRepository;
 import bank.transaction.service.TransactionService;
 
@@ -51,7 +55,7 @@ public class TransactionServiceImpl implements TransactionService{
 	public Mono<TransactionResponse> deposit(TransactionRequest transactionRequest) {
 		WebClient webClient = webClientBuilder.build();
 
-	    return transactionRepository.countByAccountNumberAndDateBetween(
+	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
 	            transactionRequest.getAccountNumber(),
 	            getStartOfMonth(),
 	            getEndOfMonth()
@@ -81,21 +85,21 @@ public class TransactionServiceImpl implements TransactionService{
 	                                .flatMap(updatedAccount -> {
 	                                    // Guardar transacción
 	                                    Transaction transaction = new Transaction();
-	                                    transaction.setType("DEPOSIT");
+	                                    transaction.setTransactionType(TransactionType.DEPOSIT);
 	                                    transaction.setProductType("ACCOUNT");
 	                                    transaction.setAmount(transactionRequest.getAmount());
 	                                    transaction.setCommission(commission);
 	                                    transaction.setAccountNumber(transactionRequest.getAccountNumber());
-	                                    transaction.setDate(LocalDateTime.now());
+	                                    transaction.setTransactionDate(LocalDate.now());
 
 	                                    return transactionRepository.save(transaction)
 	                                            .map(savedTransaction -> new TransactionResponse(
 	                                                    savedTransaction.getId(),
 	                                                    savedTransaction.getAccountNumber(),
-	                                                    savedTransaction.getType(),
+	                                                    savedTransaction.getTransactionType(),
 	                                                    savedTransaction.getProductType(),
 	                                                    savedTransaction.getAmount(),
-	                                                    savedTransaction.getDate(),
+	                                                    savedTransaction.getTransactionDate(),
 	                                                    savedTransaction.getCommission(),
 	                                                    savedTransaction.getSourceAccountNumber(),
 	                                                    savedTransaction.getDestinationAccountNumber(),
@@ -110,7 +114,7 @@ public class TransactionServiceImpl implements TransactionService{
 	public Mono<TransactionResponse> withdraw(Transaction transactionRequest) {
 		WebClient webClient = webClientBuilder.build();
 
-	    return transactionRepository.countByAccountNumberAndDateBetween(
+	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
 	            transactionRequest.getAccountNumber(),
 	            getStartOfMonth(),
 	            getEndOfMonth()
@@ -140,19 +144,19 @@ public class TransactionServiceImpl implements TransactionService{
 	                                .retrieve()
 	                                .bodyToMono(AccountResponse.class)
 	                                .flatMap(updatedAccount -> {
-	                                    transactionRequest.setType("WITHDRAW");
+	                                    transactionRequest.setTransactionType(TransactionType.DEPOSIT);
 	                                    transactionRequest.setProductType("ACCOUNT");
-	                                    transactionRequest.setDate(LocalDateTime.now());
+	                                    transactionRequest.setTransactionDate(LocalDate.now());
 	                                    transactionRequest.setCommission(commission);
 
 	                                    return transactionRepository.save(transactionRequest)
 	                                            .map(savedTransaction -> new TransactionResponse(
 	                                                    savedTransaction.getId(),
 	                                                    savedTransaction.getAccountNumber(),
-	                                                    savedTransaction.getType(),
+	                                                    savedTransaction.getTransactionType(),
 	                                                    savedTransaction.getProductType(),
 	                                                    savedTransaction.getAmount(),
-	                                                    savedTransaction.getDate(),
+	                                                    savedTransaction.getTransactionDate(),
 	                                                    savedTransaction.getCommission(),
 	                                                    savedTransaction.getSourceAccountNumber(),
 	                                                    savedTransaction.getDestinationAccountNumber(),
@@ -173,7 +177,7 @@ public class TransactionServiceImpl implements TransactionService{
 	    }
 
 	    // Contamos las transacciones realizadas este mes para verificar si se supera el límite sin comisión
-	    return transactionRepository.countByAccountNumberAndDateBetween(
+	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
 	            transactionRequest.getAccountNumber(),
 	            getStartOfMonth(),
 	            getEndOfMonth()
@@ -231,9 +235,9 @@ public class TransactionServiceImpl implements TransactionService{
 	                                        .bodyToMono(CreditResponse.class)
 	                                        .flatMap(updatedCredit -> {
 	                                            // Guardamos la transacción en el repositorio de transacciones
-	                                            transactionRequest.setType("PAYMENT");
+	                                            transactionRequest.setTransactionType(TransactionType.PAYMENT);
 	                                            transactionRequest.setProductType("CREDIT");
-	                                            transactionRequest.setDate(LocalDateTime.now());
+	                                            transactionRequest.setTransactionDate(LocalDate.now());
 	                                            transactionRequest.setCommission(commission);
 
 	                                            // Guardamos la transacción en el repositorio de transacciones
@@ -241,10 +245,10 @@ public class TransactionServiceImpl implements TransactionService{
 	                                                .map(savedTransaction -> new TransactionResponse(
 	                                                    savedTransaction.getId(),
 	                                                    savedTransaction.getAccountNumber(),
-	                                                    savedTransaction.getType(),
+	                                                    savedTransaction.getTransactionType(),
 	                                                    savedTransaction.getProductType(),
 	                                                    savedTransaction.getAmount(),
-	                                                    savedTransaction.getDate(),
+	                                                    savedTransaction.getTransactionDate(),
 	                                                    savedTransaction.getCommission(), // Aseguramos que se guarde la comisión aplicada
 	                                                    savedTransaction.getSourceAccountNumber(),
 	                                                    savedTransaction.getDestinationAccountNumber(),
@@ -265,7 +269,7 @@ public class TransactionServiceImpl implements TransactionService{
 	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card number is required"));
 	    }
 
-	    return transactionRepository.countByAccountNumberAndDateBetween(
+	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
 	            transactionRequest.getAccountNumber(),
 	            getStartOfMonth(),
 	            getEndOfMonth()
@@ -303,9 +307,9 @@ public class TransactionServiceImpl implements TransactionService{
 	                                .retrieve()
 	                                .bodyToMono(CreditResponse.class)
 	                                .flatMap(updatedCard -> {
-	                                    transactionRequest.setType("CREDIT_CARD_PAYMENT");
+	                                    transactionRequest.setTransactionType(TransactionType.CREDIT_CARD_PAYMENT);
 	                                    transactionRequest.setProductType("CREDIT_CARD");
-	                                    transactionRequest.setDate(LocalDateTime.now());
+	                                    transactionRequest.setTransactionDate(LocalDate.now());
 	                                    transactionRequest.setCommission(commission);
 	                                    transactionRequest.setCardNumber(transactionRequest.getCreditNumber());
 
@@ -313,10 +317,10 @@ public class TransactionServiceImpl implements TransactionService{
 	                                        .map(savedTransaction -> new TransactionResponse(
 	                                            savedTransaction.getId(),
 	                                            savedTransaction.getAccountNumber(),
-	                                            savedTransaction.getType(),
+	                                            savedTransaction.getTransactionType(),
 	                                            savedTransaction.getProductType(),
 	                                            savedTransaction.getAmount(),
-	                                            savedTransaction.getDate(),
+	                                            savedTransaction.getTransactionDate(),
 	                                            savedTransaction.getCommission(),
 	                                            savedTransaction.getSourceAccountNumber(),
 	                                            savedTransaction.getDestinationAccountNumber(),
@@ -359,17 +363,17 @@ public class TransactionServiceImpl implements TransactionService{
         response.setId(transaction.getId());
         response.setAccountNumber(transaction.getAccountNumber());
         response.setAmount(transaction.getAmount());
-        response.setType(transaction.getType());
-        response.setDate(transaction.getDate());
+        response.setTransactionType(transaction.getTransactionType());
+        response.setDate(transaction.getTransactionDate());
         return response;
     }
 
-    private LocalDateTime getStartOfMonth() {
-        return LocalDate.now().withDayOfMonth(1).atStartOfDay();
+    private LocalDate getStartOfMonth() {
+    	return LocalDate.now().withDayOfMonth(1);
     }
 
-    private LocalDateTime getEndOfMonth() {
-        return LocalDate.now().with(TemporalAdjusters.lastDayOfMonth()).atTime(LocalTime.MAX);
+    private LocalDate getEndOfMonth() {
+    	return LocalDate.now().with(TemporalAdjusters.lastDayOfMonth());
     }
     
     @Override
@@ -380,7 +384,7 @@ public class TransactionServiceImpl implements TransactionService{
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Both source and destination account numbers are required"));
         }
 
-        return transactionRepository.countByAccountNumberAndDateBetween(
+        return transactionRepository.countByAccountNumberAndTransactionDateBetween(
                 transferRequest.getSourceAccountNumber(),
                 getStartOfMonth(),
                 getEndOfMonth()
@@ -432,11 +436,11 @@ public class TransactionServiceImpl implements TransactionService{
                                 .flatMap(updatedDestination -> {
                                     Transaction transaction = new Transaction();
                                     transaction.setProductType("ACCOUNT");
-                                    transaction.setType("TRANSFER");
+                                    transaction.setTransactionType(TransactionType.TRANSFER);
                                     transaction.setAmount(transferRequest.getAmount());
                                     transaction.setSourceAccountNumber(transferRequest.getSourceAccountNumber());
                                     transaction.setDestinationAccountNumber(transferRequest.getDestinationAccountNumber());
-                                    transaction.setDate(LocalDateTime.now());
+                                    transaction.setTransactionDate(LocalDate.now());
                                     transaction.setCommission(commission);
                                     
 
@@ -444,10 +448,10 @@ public class TransactionServiceImpl implements TransactionService{
                                             .map(savedTransaction -> new TransactionResponse(
                                                     savedTransaction.getId(),
                                                     savedTransaction.getAccountNumber(),
-                                                    savedTransaction.getType(),
+                                                    savedTransaction.getTransactionType(),
                                                     savedTransaction.getProductType(),
                                                     savedTransaction.getAmount(),
-                                                    savedTransaction.getDate(),
+                                                    savedTransaction.getTransactionDate(),
                                                     savedTransaction.getCommission(),
                                                     savedTransaction.getSourceAccountNumber(),
                                                     savedTransaction.getDestinationAccountNumber(),
@@ -460,7 +464,7 @@ public class TransactionServiceImpl implements TransactionService{
     
     @Override
     public Flux<CommissionReportResponse> getCommissionReport(LocalDate startDate, LocalDate endDate) {
-        return transactionRepository.findByDateBetween(startDate, endDate)
+        return transactionRepository.findByTransactionDateBetween(startDate, endDate)
                 .filter(tx -> tx.getCommission() != null && tx.getCommission().compareTo(BigDecimal.ZERO) > 0)
                 .groupBy(Transaction::getProductType)
                 .flatMap(groupedFlux -> groupedFlux
@@ -472,18 +476,16 @@ public class TransactionServiceImpl implements TransactionService{
 
     @Override
     public Mono<List<TransactionResponse>> getTransactionsByProductTypeAndDateRange(String productType, LocalDate startDate, LocalDate endDate) {
-        LocalDateTime start = startDate.atStartOfDay();
-        LocalDateTime end = endDate.atTime(LocalTime.MAX);
-
+    	// No convertir a LocalDateTime
         return transactionRepository
-            .findByProductTypeAndDateBetween(productType.toUpperCase(), start, end)
+            .findByProductTypeAndTransactionDateBetween(productType.toUpperCase(), startDate, endDate)
             .map(tx -> new TransactionResponse(
                 tx.getId(),
                 tx.getAccountNumber(),
-                tx.getType(),
+                tx.getTransactionType(),
                 tx.getProductType(),
                 tx.getAmount(),
-                tx.getDate(),
+                tx.getTransactionDate(),
                 tx.getCommission(),
                 tx.getSourceAccountNumber(),
                 tx.getDestinationAccountNumber(),
@@ -511,7 +513,7 @@ public class TransactionServiceImpl implements TransactionService{
 	                .retrieve()
 	                .bodyToMono(AccountResponse.class)
 	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
-	                .flatMap(account -> transactionRepository.countByAccountNumberAndDateBetween(
+	                .flatMap(account -> transactionRepository.countByAccountNumberAndTransactionDateBetween(
 	                        account.getAccountNumber(), getStartOfMonth(), getEndOfMonth())
 	                    .flatMap(txCount -> {
 	                        BigDecimal commission = txCount >= MAX_FREE_TRANSACTIONS ? COMMISSION_AMOUNT : BigDecimal.ZERO;
@@ -531,11 +533,11 @@ public class TransactionServiceImpl implements TransactionService{
 	                            .flatMap(updatedAccount -> {
 	                                Transaction tx = Transaction.builder()
 	                                        .accountNumber(account.getAccountNumber())
-	                                        .type("DEBIT_CARD_PAYMENT")
+	                                        .transactionType(TransactionType.CREDIT_CARD_PAYMENT)
 	                                        .productType("ACCOUNT")
 	                                        .amount(request.getAmount())
 	                                        .commission(commission)
-	                                        .date(LocalDateTime.now())
+	                                        .transactionDate(LocalDate.now())
 	                                        .cardNumber(request.getCardNumber()) // Aquí lo agregamos
 	                                        .build();
 
@@ -543,10 +545,10 @@ public class TransactionServiceImpl implements TransactionService{
 	                                    .map(saved -> new TransactionResponse(
 	                                            saved.getId(),
 	                                            saved.getAccountNumber(),
-	                                            saved.getType(),
+	                                            saved.getTransactionType(),
 	                                            saved.getProductType(),
 	                                            saved.getAmount(),
-	                                            saved.getDate(),
+	                                            saved.getTransactionDate(),
 	                                            saved.getCommission(),
 	                                            saved.getSourceAccountNumber(),
 	                                            saved.getDestinationAccountNumber(),
@@ -560,21 +562,64 @@ public class TransactionServiceImpl implements TransactionService{
 	@Override
 	public Flux<TransactionDTO> getLastMovementsByCardNumbers(List<String> cardNumbers) {
 		return Flux.fromIterable(cardNumbers)
-	            .flatMap(cardNumber -> transactionRepository.findByCardNumberOrderByDateDesc(cardNumber)
+	            .flatMap(cardNumber -> transactionRepository.findByCardNumberOrderByTransactionDateDesc(cardNumber)
 	                    .take(10)) // Toma los 10 últimos por cada tarjeta
-	            .sort((tx1, tx2) -> tx2.getDate().compareTo(tx1.getDate())) // Ordena globalmente por fecha descendente
+	            .sort((tx1, tx2) -> tx2.getTransactionDate().compareTo(tx1.getTransactionDate())) // Ordena globalmente por fecha descendente
 	            .take(10) // Toma los últimos 10 en total (combinados)
-	            .map(tx -> new TransactionDTO(
-	                    tx.getAccountNumber(),
-	                    tx.getType(),
-	                    tx.getAmount(),
-	                    tx.getDate(),
-	                    tx.getCommission(),
-	                    tx.getProductType(),
-	                    tx.getSourceAccountNumber(),
-	                    tx.getDestinationAccountNumber(),
-	                    tx.getCardNumber()
+	            .map(tx -> new TransactionDTO(tx.getAccountNumber(), 
+	            		tx.getTransactionType(), 
+	            		tx.getAmount(), 
+	            		tx.getTransactionDate(), 
+	            		tx.getCommission(), 
+	            		tx.getProductType(), 
+	            		tx.getSourceAccountNumber(), 
+	            		tx.getDestinationAccountNumber(), 
+	            		tx.getCardNumber()
 	            ));
+	}
+
+	@Override
+	public Mono<Transaction> processCreditPayment(CreditPaymentRequest request) {
+		
+		WebClient webClient = webClientBuilder.baseUrl(CREDIT_SERVICE_URL).build();
+
+	    String productType = request.getProductType();
+	    String productNumber = request.getProductNumber();
+	    BigDecimal amount = request.getAmount();
+
+	    Transaction transaction = new Transaction();
+	    transaction.setAmount(amount);
+	    transaction.setDocumentNumber(request.getPayerDocumentNumber());
+	    transaction.setTransactionType(TransactionType.CREDIT_PAYMENT);
+	    transaction.setTransactionDate(LocalDate.now());
+
+	    if ("LOAN".equalsIgnoreCase(productType)) {
+	        // Asumiendo que el endpoint correcto para préstamos es /loans/{creditNumber}/pay
+	        return webClient.post()
+	                .uri("/{creditNumber}/pay?amount={amount}", productNumber, amount)
+	                .retrieve()
+	                .bodyToMono(LoanResponse.class)
+	                .flatMap(loan -> {
+	                    transaction.setCreditNumber(loan.getCreditNumber());
+	                    transaction.setDescription("Loan payment for credit number: " + loan.getCreditNumber());
+	                    return transactionRepository.save(transaction);
+	                })
+	                .onErrorResume(e -> Mono.error(new RuntimeException("Error processing loan payment: " + e.getMessage())));
+	    } else if ("CREDIT_CARD".equalsIgnoreCase(productType)) {
+	        // Asumiendo que el endpoint correcto para tarjetas de crédito es /credit-cards/{cardsNumber}/pay
+	        return webClient.post()
+	                .uri("/credit-cards/{cardsNumber}/pay?amount={amount}", productNumber, amount)
+	                .retrieve()
+	                .bodyToMono(CreditCardResponse.class)
+	                .flatMap(card -> {
+	                    transaction.setCardNumber(card.getCardsNumber());
+	                    transaction.setDescription("Credit card payment for card number: " + card.getCardsNumber());
+	                    return transactionRepository.save(transaction);
+	                })
+	                .onErrorResume(e -> Mono.error(new RuntimeException("Error processing credit card payment: " + e.getMessage())));
+	    } else {
+	        return Mono.error(new IllegalArgumentException("Invalid product type. Must be LOAN or CREDIT_CARD."));
+	    }
 	}
     
 }
