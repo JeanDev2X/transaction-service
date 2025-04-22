@@ -12,4 +12,5 @@ import lombok.NoArgsConstructor;
 public class DebitCardPaymentRequest {
 	private String cardNumber;
     private BigDecimal amount;
+    private String description;
 }
