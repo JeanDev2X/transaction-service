@@ -503,60 +503,57 @@ public class TransactionServiceImpl implements TransactionService{
 	        .retrieve()
 	        .bodyToMono(DebitCardDTO.class)
 	        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Debit card not found")))
-	        .flatMap(card -> {
-	            if (card.getAccountNumber() == null || card.getAccountNumber().isEmpty()) {
-	                return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card not linked to account"));
-	            }
-
-	            return webClient.get()
-	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", card.getAccountNumber())
+	        .flatMapMany(card -> Flux.fromIterable(card.getAccountNumbers())) // ← Cambiamos a múltiples cuentas
+	        .concatMap(accountNumber ->
+	            webClient.get()
+	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", accountNumber)
 	                .retrieve()
 	                .bodyToMono(AccountResponse.class)
-	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
-	                .flatMap(account -> transactionRepository.countByAccountNumberAndTransactionDateBetween(
-	                        account.getAccountNumber(), getStartOfMonth(), getEndOfMonth())
-	                    .flatMap(txCount -> {
-	                        BigDecimal commission = txCount >= MAX_FREE_TRANSACTIONS ? COMMISSION_AMOUNT : BigDecimal.ZERO;
-	                        BigDecimal total = request.getAmount().add(commission);
+	                .flatMap(account -> {
+	                    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
+	                                account.getAccountNumber(), getStartOfMonth(), getEndOfMonth())
+	                        .flatMap(txCount -> {
+	                            BigDecimal commission = txCount >= MAX_FREE_TRANSACTIONS ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+	                            BigDecimal total = request.getAmount().add(commission);
 
-	                        if (account.getBalance().compareTo(total) < 0) {
-	                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
-	                        }
+	                            if (account.getBalance().compareTo(total) >= 0) {
+	                                account.setBalance(account.getBalance().subtract(total));
+	                                return webClient.put()
+	                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                                    .bodyValue(account)
+	                                    .retrieve()
+	                                    .bodyToMono(AccountResponse.class)
+	                                    .flatMap(updatedAccount -> {
+	                                        Transaction tx = Transaction.builder()
+	                                                .accountNumber(account.getAccountNumber())
+	                                                .transactionType(TransactionType.DEBIT_CARD_PAYMENT)
+	                                                .productType("ACCOUNT")
+	                                                .amount(request.getAmount())
+	                                                .commission(commission)
+	                                                .transactionDate(LocalDate.now())
+	                                                .cardNumber(request.getCardNumber())
+	                                                .build();
 
-	                        account.setBalance(account.getBalance().subtract(total));
-
-	                        return webClient.put()
-	                            .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
-	                            .bodyValue(account)
-	                            .retrieve()
-	                            .bodyToMono(AccountResponse.class)
-	                            .flatMap(updatedAccount -> {
-	                                Transaction tx = Transaction.builder()
-	                                        .accountNumber(account.getAccountNumber())
-	                                        .transactionType(TransactionType.CREDIT_CARD_PAYMENT)
-	                                        .productType("ACCOUNT")
-	                                        .amount(request.getAmount())
-	                                        .commission(commission)
-	                                        .transactionDate(LocalDate.now())
-	                                        .cardNumber(request.getCardNumber()) // Aquí lo agregamos
-	                                        .build();
-
-	                                return transactionRepository.save(tx)
-	                                    .map(saved -> new TransactionResponse(
-	                                            saved.getId(),
-	                                            saved.getAccountNumber(),
-	                                            saved.getTransactionType(),
-	                                            saved.getProductType(),
-	                                            saved.getAmount(),
-	                                            saved.getTransactionDate(),
-	                                            saved.getCommission(),
-	                                            saved.getSourceAccountNumber(),
-	                                            saved.getDestinationAccountNumber(),
-	                                            saved.getCardNumber() // Agrega esta línea
-	                                    ));
-	                            });
-	                    }));
-	        });
+	                                        return transactionRepository.save(tx)
+	                                            .map(saved -> new TransactionResponse(
+	                                                    saved.getId(),
+	                                                    saved.getAccountNumber(),
+	                                                    saved.getTransactionType(),
+	                                                    saved.getProductType(),
+	                                                    saved.getAmount(),
+	                                                    saved.getTransactionDate(),
+	                                                    saved.getCommission(),
+	                                                    saved.getSourceAccountNumber(),
+	                                                    saved.getDestinationAccountNumber(),
+	                                                    saved.getCardNumber()));
+	                                    });
+	                            } else {
+	                                return Mono.empty(); // no tiene saldo, pasamos a la siguiente
+	                            }
+	                        });
+	                }))
+	        .next() // Tomamos solo la primera cuenta que haya podido pagar
+	        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds in all linked accounts")));
 	}
 
 	@Override
