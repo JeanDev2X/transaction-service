@@ -27,6 +27,7 @@ import bank.transaction.dto.TransferRequest;
 import bank.transaction.entity.Transaction;
 import bank.transaction.entity.TransactionType;
 import bank.transaction.repository.TransactionRepository;
+import bank.transaction.service.TransactionConfigCacheService;
 import bank.transaction.service.TransactionService;
 
 import java.math.BigDecimal;
@@ -45,91 +46,164 @@ public class TransactionServiceImpl implements TransactionService{
 	//en el metodo, paycredit, falta implementar la actualizacion de la cuenta de credito,validar
 	private static final String CREDIT_SERVICE_URL = "http://localhost:8022/loans";
 	
-	private static final int MAX_FREE_TRANSACTIONS = 5;
-	private static final BigDecimal COMMISSION_AMOUNT = new BigDecimal("1.50");
-	
 	@Autowired
     private TransactionRepository transactionRepository;
+	
+	@Autowired
+	private TransactionConfigCacheService transactionConfigCacheService;
 
 	@Override
 	public Mono<TransactionResponse> deposit(TransactionRequest transactionRequest) {
 		WebClient webClient = webClientBuilder.build();
 
-	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
-	            transactionRequest.getAccountNumber(),
-	            getStartOfMonth(),
-	            getEndOfMonth()
-	        )
-	        .flatMap(transactionCount -> {
-	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+	    return transactionConfigCacheService.getConfig()
+	        .switchIfEmpty(Mono.error(new IllegalStateException("Transaction configuration not found")))
+	        .flatMap(config ->
+	            transactionRepository.countByAccountNumberAndTransactionDateBetween(
+	                    transactionRequest.getAccountNumber(),
+	                    getStartOfMonth(),
+	                    getEndOfMonth()
+	            )
+	            .flatMap(transactionCount -> {
+	                BigDecimal commission = (transactionCount >= config.getMaxFreeTransactions())
+	                        ? config.getCommissionAmount()
+	                        : BigDecimal.ZERO;
 
-	            return webClient
-	                    .get()
-	                    .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
-	                    .retrieve()
-	                    .bodyToMono(AccountResponse.class)
-	                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
-	                    .flatMap(accountResponse -> {
-	                        // Calcular el monto final después de aplicar la comisión (si la hay)
-	                        BigDecimal finalAmount = transactionRequest.getAmount().subtract(commission);
+	                return webClient.get()
+	                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                        .retrieve()
+	                        .bodyToMono(AccountResponse.class)
+	                        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                        .flatMap(accountResponse -> {
+	                            BigDecimal finalAmount = transactionRequest.getAmount().subtract(commission);
+	                            accountResponse.setBalance(accountResponse.getBalance().add(finalAmount));
 
-	                        accountResponse.setBalance(accountResponse.getBalance().add(finalAmount));
+	                            return webClient.put()
+	                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", accountResponse.getId())
+	                                    .bodyValue(accountResponse)
+	                                    .retrieve()
+	                                    .bodyToMono(AccountResponse.class)
+	                                    .flatMap(updatedAccount -> {
+	                                        Transaction transaction = new Transaction();
+	                                        transaction.setTransactionType(TransactionType.DEPOSIT);
+	                                        transaction.setProductType("ACCOUNT");
+	                                        transaction.setAmount(transactionRequest.getAmount());
+	                                        transaction.setCommission(commission);
+	                                        transaction.setAccountNumber(transactionRequest.getAccountNumber());
+	                                        transaction.setTransactionDate(LocalDate.now());
 
-	                        // Actualizar saldo
-	                        return webClient
-	                                .put()
-	                                .uri(ACCOUNT_SERVICE_URL + "/{id}", accountResponse.getId())
-	                                .bodyValue(accountResponse)
-	                                .retrieve()
-	                                .bodyToMono(AccountResponse.class)
-	                                .flatMap(updatedAccount -> {
-	                                    // Guardar transacción
-	                                    Transaction transaction = new Transaction();
-	                                    transaction.setTransactionType(TransactionType.DEPOSIT);
-	                                    transaction.setProductType("ACCOUNT");
-	                                    transaction.setAmount(transactionRequest.getAmount());
-	                                    transaction.setCommission(commission);
-	                                    transaction.setAccountNumber(transactionRequest.getAccountNumber());
-	                                    transaction.setTransactionDate(LocalDate.now());
-
-	                                    return transactionRepository.save(transaction)
-	                                            .map(savedTransaction -> new TransactionResponse(
-	                                                    savedTransaction.getId(),
-	                                                    savedTransaction.getAccountNumber(),
-	                                                    savedTransaction.getTransactionType(),
-	                                                    savedTransaction.getProductType(),
-	                                                    savedTransaction.getAmount(),
-	                                                    savedTransaction.getTransactionDate(),
-	                                                    savedTransaction.getCommission(),
-	                                                    savedTransaction.getSourceAccountNumber(),
-	                                                    savedTransaction.getDestinationAccountNumber(),
-	                                                    savedTransaction.getCardNumber()
-	                                            ));
-	                                });
-	                    });
-	        });
+	                                        return transactionRepository.save(transaction)
+	                                                .map(savedTransaction -> new TransactionResponse(
+	                                                        savedTransaction.getId(),
+	                                                        savedTransaction.getAccountNumber(),
+	                                                        savedTransaction.getTransactionType(),
+	                                                        savedTransaction.getProductType(),
+	                                                        savedTransaction.getAmount(),
+	                                                        savedTransaction.getTransactionDate(),
+	                                                        savedTransaction.getCommission(),
+	                                                        savedTransaction.getSourceAccountNumber(),
+	                                                        savedTransaction.getDestinationAccountNumber(),
+	                                                        savedTransaction.getCardNumber()
+	                                                ));
+	                                    });
+	                        });
+	            })
+	        );
 	}
 
 	@Override
 	public Mono<TransactionResponse> withdraw(Transaction transactionRequest) {
 		WebClient webClient = webClientBuilder.build();
 
-	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
-	            transactionRequest.getAccountNumber(),
-	            getStartOfMonth(),
-	            getEndOfMonth()
-	        )
-	        .flatMap(transactionCount -> {
-	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+	    return transactionConfigCacheService.getConfig()
+	        .switchIfEmpty(Mono.error(new IllegalStateException("Transaction configuration not found in cache")))
+	        .flatMap(config ->
+	            transactionRepository.countByAccountNumberAndTransactionDateBetween(
+	                    transactionRequest.getAccountNumber(),
+	                    getStartOfMonth(),
+	                    getEndOfMonth()
+	            )
+	            .flatMap(transactionCount -> {
+	                BigDecimal commission = (transactionCount >= config.getMaxFreeTransactions())
+	                        ? config.getCommissionAmount()
+	                        : BigDecimal.ZERO;
 
-	            return webClient
+	                return webClient
+	                        .get()
+	                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                        .retrieve()
+	                        .bodyToMono(AccountResponse.class)
+	                        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                        .flatMap(account -> {
+	                            BigDecimal finalAmount = transactionRequest.getAmount().add(commission); // retirar más si hay comisión
+
+	                            if (account.getBalance().compareTo(finalAmount) < 0) {
+	                                return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
+	                            }
+
+	                            account.setBalance(account.getBalance().subtract(finalAmount));
+
+	                            return webClient
+	                                    .put()
+	                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                                    .bodyValue(account)
+	                                    .retrieve()
+	                                    .bodyToMono(AccountResponse.class)
+	                                    .flatMap(updatedAccount -> {
+	                                        transactionRequest.setTransactionType(TransactionType.WITHDRAWAL); // ← aquí corregí también el tipo
+	                                        transactionRequest.setProductType("ACCOUNT");
+	                                        transactionRequest.setTransactionDate(LocalDate.now());
+	                                        transactionRequest.setCommission(commission);
+
+	                                        return transactionRepository.save(transactionRequest)
+	                                                .map(savedTransaction -> new TransactionResponse(
+	                                                        savedTransaction.getId(),
+	                                                        savedTransaction.getAccountNumber(),
+	                                                        savedTransaction.getTransactionType(),
+	                                                        savedTransaction.getProductType(),
+	                                                        savedTransaction.getAmount(),
+	                                                        savedTransaction.getTransactionDate(),
+	                                                        savedTransaction.getCommission(),
+	                                                        savedTransaction.getSourceAccountNumber(),
+	                                                        savedTransaction.getDestinationAccountNumber(),
+	                                                        savedTransaction.getCardNumber()
+	                                                ));
+	                                    });
+	                        });
+	            })
+	        );
+	}
+
+	@Override
+	public Mono<TransactionResponse> payCredit(Transaction transactionRequest) {
+		WebClient webClient = webClientBuilder.build();
+
+	    System.out.println("numero de credito = " + transactionRequest.getCreditNumber());
+
+	    if (transactionRequest.getCreditNumber() == null || transactionRequest.getCreditNumber().isEmpty()) {
+	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Credit ID is required for credit payments"));
+	    }
+
+	    return transactionConfigCacheService.getConfig()
+	        .switchIfEmpty(Mono.error(new IllegalStateException("Transaction configuration not found in cache")))
+	        .flatMap(config ->
+	            transactionRepository.countByAccountNumberAndTransactionDateBetween(
+	                transactionRequest.getAccountNumber(),
+	                getStartOfMonth(),
+	                getEndOfMonth()
+	            ).flatMap(transactionCount -> {
+	                BigDecimal commission = (transactionCount >= config.getMaxFreeTransactions())
+	                        ? config.getCommissionAmount()
+	                        : BigDecimal.ZERO;
+
+	                return webClient
 	                    .get()
 	                    .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
 	                    .retrieve()
 	                    .bodyToMono(AccountResponse.class)
 	                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
 	                    .flatMap(account -> {
-	                        BigDecimal finalAmount = transactionRequest.getAmount().add(commission); // retirar más si hay comisión
+	                        BigDecimal finalAmount = transactionRequest.getAmount().add(commission);
 
 	                        if (account.getBalance().compareTo(finalAmount) < 0) {
 	                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
@@ -138,198 +212,130 @@ public class TransactionServiceImpl implements TransactionService{
 	                        account.setBalance(account.getBalance().subtract(finalAmount));
 
 	                        return webClient
-	                                .put()
-	                                .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
-	                                .bodyValue(account)
-	                                .retrieve()
-	                                .bodyToMono(AccountResponse.class)
-	                                .flatMap(updatedAccount -> {
-	                                    transactionRequest.setTransactionType(TransactionType.DEPOSIT);
-	                                    transactionRequest.setProductType("ACCOUNT");
-	                                    transactionRequest.setTransactionDate(LocalDate.now());
-	                                    transactionRequest.setCommission(commission);
+	                            .put()
+	                            .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                            .bodyValue(account)
+	                            .retrieve()
+	                            .bodyToMono(AccountResponse.class)
+	                            .flatMap(updatedAccount ->
+	                                webClient
+	                                    .get()
+	                                    .uri(CREDIT_SERVICE_URL + "/{creditNumber}", transactionRequest.getCreditNumber())
+	                                    .retrieve()
+	                                    .bodyToMono(CreditResponse.class)
+	                                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Credit not found")))
+	                                    .flatMap(creditResponse -> {
+	                                        creditResponse.setBalance(
+	                                            creditResponse.getBalance().subtract(transactionRequest.getAmount())
+	                                        );
 
-	                                    return transactionRepository.save(transactionRequest)
-	                                            .map(savedTransaction -> new TransactionResponse(
-	                                                    savedTransaction.getId(),
-	                                                    savedTransaction.getAccountNumber(),
-	                                                    savedTransaction.getTransactionType(),
-	                                                    savedTransaction.getProductType(),
-	                                                    savedTransaction.getAmount(),
-	                                                    savedTransaction.getTransactionDate(),
-	                                                    savedTransaction.getCommission(),
-	                                                    savedTransaction.getSourceAccountNumber(),
-	                                                    savedTransaction.getDestinationAccountNumber(),
-	                                                    savedTransaction.getCardNumber()
-	                                            ));
-	                                });
-	                    });
-	        });
-	}
-
-	@Override
-	public Mono<TransactionResponse> payCredit(Transaction transactionRequest) {
-		WebClient webClient = webClientBuilder.build();
-	    System.out.println("numero de credito = "+transactionRequest.getCreditNumber());
-	    // Validar que el creditNumber esté presente en la transacción
-	    if (transactionRequest.getCreditNumber() == null || transactionRequest.getCreditNumber().isEmpty()) {
-	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Credit ID is required for credit payments"));
-	    }
-
-	    // Contamos las transacciones realizadas este mes para verificar si se supera el límite sin comisión
-	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
-	            transactionRequest.getAccountNumber(),
-	            getStartOfMonth(),
-	            getEndOfMonth()
-	        )
-	        .flatMap(transactionCount -> {
-	            // Si superó el límite, aplicamos la comisión
-	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
-
-	            // Obtener la cuenta bancaria asociada para verificar saldo
-	            return webClient
-	                .get()
-	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
-	                .retrieve()
-	                .bodyToMono(AccountResponse.class)
-	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
-	                .flatMap(account -> {
-	                    BigDecimal finalAmount = transactionRequest.getAmount().add(commission);
-
-	                    // Verificar si hay fondos suficientes en la cuenta bancaria para realizar el pago (con comisión si aplica)
-	                    if (account.getBalance().compareTo(finalAmount) < 0) {
-	                        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
-	                    }
-
-	                    // Debitar el monto del saldo de la cuenta bancaria
-	                    account.setBalance(account.getBalance().subtract(finalAmount));
-
-	                    // Actualizar la cuenta bancaria con el nuevo saldo
-	                    return webClient
-	                        .put()
-	                        .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
-	                        .bodyValue(account)
-	                        .retrieve()
-	                        .bodyToMono(AccountResponse.class)
-	                        .flatMap(updatedAccount -> {
-	                        	System.out.println("numero de credito = "+transactionRequest.getCreditNumber());
-	                            // Aquí se realiza la conexión al servicio de créditos para actualizar el saldo del crédito
-	                            return webClient
-	                                .get()
-	                                .uri(CREDIT_SERVICE_URL + "/{creditNumber}", transactionRequest.getCreditNumber())
-	                                .retrieve()
-	                                .bodyToMono(CreditResponse.class)
-	                                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Credit not found")))
-	                                .flatMap(creditResponse -> {
-	                                	
-	                                    // Reducir el saldo del crédito por el monto de la transacción
-	                                    creditResponse.setBalance(creditResponse.getBalance().subtract(transactionRequest.getAmount()));
-
-	                                    // Actualizar el crédito en el servicio de créditos
-	                                    return webClient
-	                                    		.post()
-	                                        .uri(CREDIT_SERVICE_URL + "/{creditNumber}/pay?amount=" + transactionRequest.getAmount(),
+	                                        return webClient
+	                                            .post()
+	                                            .uri(CREDIT_SERVICE_URL + "/{creditNumber}/pay?amount=" + transactionRequest.getAmount(),
 	                                                transactionRequest.getCreditNumber())
-	                                        .bodyValue(creditResponse)
-	                                        .retrieve()
-	                                        .bodyToMono(CreditResponse.class)
-	                                        .flatMap(updatedCredit -> {
-	                                            // Guardamos la transacción en el repositorio de transacciones
-	                                            transactionRequest.setTransactionType(TransactionType.PAYMENT);
-	                                            transactionRequest.setProductType("CREDIT");
-	                                            transactionRequest.setTransactionDate(LocalDate.now());
-	                                            transactionRequest.setCommission(commission);
+	                                            .bodyValue(creditResponse)
+	                                            .retrieve()
+	                                            .bodyToMono(CreditResponse.class)
+	                                            .flatMap(updatedCredit -> {
+	                                                transactionRequest.setTransactionType(TransactionType.PAYMENT);
+	                                                transactionRequest.setProductType("CREDIT");
+	                                                transactionRequest.setTransactionDate(LocalDate.now());
+	                                                transactionRequest.setCommission(commission);
 
-	                                            // Guardamos la transacción en el repositorio de transacciones
-	                                            return transactionRepository.save(transactionRequest)
-	                                                .map(savedTransaction -> new TransactionResponse(
-	                                                    savedTransaction.getId(),
-	                                                    savedTransaction.getAccountNumber(),
-	                                                    savedTransaction.getTransactionType(),
-	                                                    savedTransaction.getProductType(),
-	                                                    savedTransaction.getAmount(),
-	                                                    savedTransaction.getTransactionDate(),
-	                                                    savedTransaction.getCommission(), // Aseguramos que se guarde la comisión aplicada
-	                                                    savedTransaction.getSourceAccountNumber(),
-	                                                    savedTransaction.getDestinationAccountNumber(),
-	                                                    savedTransaction.getCardNumber()
-	                                                ));
-	                                        });
-	                                });
-	                        });
-	                });
-	        });
+	                                                return transactionRepository.save(transactionRequest)
+	                                                    .map(savedTransaction -> new TransactionResponse(
+	                                                        savedTransaction.getId(),
+	                                                        savedTransaction.getAccountNumber(),
+	                                                        savedTransaction.getTransactionType(),
+	                                                        savedTransaction.getProductType(),
+	                                                        savedTransaction.getAmount(),
+	                                                        savedTransaction.getTransactionDate(),
+	                                                        savedTransaction.getCommission(),
+	                                                        savedTransaction.getSourceAccountNumber(),
+	                                                        savedTransaction.getDestinationAccountNumber(),
+	                                                        savedTransaction.getCardNumber()
+	                                                    ));
+	                                            });
+	                                    })
+	                            );
+	                    });
+	            })
+	        );
 	}
 	
 	@Override
 	public Mono<TransactionResponse> payCreditCard(Transaction transactionRequest) {
-	    WebClient webClient = webClientBuilder.build();
+		WebClient webClient = webClientBuilder.build();
 
 	    if (transactionRequest.getCreditNumber() == null || transactionRequest.getCreditNumber().isEmpty()) {
 	        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card number is required"));
 	    }
 
-	    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
-	            transactionRequest.getAccountNumber(),
-	            getStartOfMonth(),
-	            getEndOfMonth()
-	        )
-	        .flatMap(transactionCount -> {
-	            BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
+	    return transactionConfigCacheService.getConfig()
+	        .switchIfEmpty(Mono.error(new IllegalStateException("Transaction configuration not found in cache")))
+	        .flatMap(config ->
+	            transactionRepository.countByAccountNumberAndTransactionDateBetween(
+	                transactionRequest.getAccountNumber(),
+	                getStartOfMonth(),
+	                getEndOfMonth()
+	            ).flatMap(transactionCount -> {
+	                BigDecimal commission = (transactionCount >= config.getMaxFreeTransactions())
+	                        ? config.getCommissionAmount()
+	                        : BigDecimal.ZERO;
 
-	            return webClient
-	                .get()
-	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
-	                .retrieve()
-	                .bodyToMono(AccountResponse.class)
-	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
-	                .flatMap(account -> {
-	                    BigDecimal finalAmount = transactionRequest.getAmount().add(commission);
+	                return webClient
+	                    .get()
+	                    .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transactionRequest.getAccountNumber())
+	                    .retrieve()
+	                    .bodyToMono(AccountResponse.class)
+	                    .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found")))
+	                    .flatMap(account -> {
+	                        BigDecimal finalAmount = transactionRequest.getAmount().add(commission);
 
-	                    if (account.getBalance().compareTo(finalAmount) < 0) {
-	                        return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
-	                    }
+	                        if (account.getBalance().compareTo(finalAmount) < 0) {
+	                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds"));
+	                        }
 
-	                    account.setBalance(account.getBalance().subtract(finalAmount));
+	                        account.setBalance(account.getBalance().subtract(finalAmount));
 
-	                    return webClient
-	                        .put()
-	                        .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
-	                        .bodyValue(account)
-	                        .retrieve()
-	                        .bodyToMono(AccountResponse.class)
-	                        .flatMap(updatedAccount -> {
-	                            // Aquí se llama al endpoint del credit-service para pagar la tarjeta
-	                            return webClient
-	                                .post()
-	                                .uri(CREDIT_SERVICE_URL + "/credit-cards/" + transactionRequest.getCreditNumber() + "/pay?amount=" + transactionRequest.getAmount()
-	                                	)
-	                                .retrieve()
-	                                .bodyToMono(CreditResponse.class)
-	                                .flatMap(updatedCard -> {
-	                                    transactionRequest.setTransactionType(TransactionType.CREDIT_CARD_PAYMENT);
-	                                    transactionRequest.setProductType("CREDIT_CARD");
-	                                    transactionRequest.setTransactionDate(LocalDate.now());
-	                                    transactionRequest.setCommission(commission);
-	                                    transactionRequest.setCardNumber(transactionRequest.getCreditNumber());
+	                        return webClient
+	                            .put()
+	                            .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                            .bodyValue(account)
+	                            .retrieve()
+	                            .bodyToMono(AccountResponse.class)
+	                            .flatMap(updatedAccount -> 
+	                                webClient
+	                                    .post()
+	                                    .uri(CREDIT_SERVICE_URL + "/credit-cards/{cardNumber}/pay?amount=" + transactionRequest.getAmount(),
+	                                        transactionRequest.getCreditNumber())
+	                                    .retrieve()
+	                                    .bodyToMono(CreditResponse.class)
+	                                    .flatMap(updatedCard -> {
+	                                        transactionRequest.setTransactionType(TransactionType.CREDIT_CARD_PAYMENT);
+	                                        transactionRequest.setProductType("CREDIT_CARD");
+	                                        transactionRequest.setTransactionDate(LocalDate.now());
+	                                        transactionRequest.setCommission(commission);
+	                                        transactionRequest.setCardNumber(transactionRequest.getCreditNumber());
 
-	                                    return transactionRepository.save(transactionRequest)
-	                                        .map(savedTransaction -> new TransactionResponse(
-	                                            savedTransaction.getId(),
-	                                            savedTransaction.getAccountNumber(),
-	                                            savedTransaction.getTransactionType(),
-	                                            savedTransaction.getProductType(),
-	                                            savedTransaction.getAmount(),
-	                                            savedTransaction.getTransactionDate(),
-	                                            savedTransaction.getCommission(),
-	                                            savedTransaction.getSourceAccountNumber(),
-	                                            savedTransaction.getDestinationAccountNumber(),
-	                                            savedTransaction.getCardNumber()
-	                                        ));
-	                                });
-	                        });
-	                });
-	        });
+	                                        return transactionRepository.save(transactionRequest)
+	                                            .map(savedTransaction -> new TransactionResponse(
+	                                                savedTransaction.getId(),
+	                                                savedTransaction.getAccountNumber(),
+	                                                savedTransaction.getTransactionType(),
+	                                                savedTransaction.getProductType(),
+	                                                savedTransaction.getAmount(),
+	                                                savedTransaction.getTransactionDate(),
+	                                                savedTransaction.getCommission(),
+	                                                savedTransaction.getSourceAccountNumber(),
+	                                                savedTransaction.getDestinationAccountNumber(),
+	                                                savedTransaction.getCardNumber()
+	                                            ));
+	                                    })
+	                            );
+	                    });
+	            })
+	        );
 	}
 	
 //	@Override
@@ -384,82 +390,86 @@ public class TransactionServiceImpl implements TransactionService{
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Both source and destination account numbers are required"));
         }
 
-        return transactionRepository.countByAccountNumberAndTransactionDateBetween(
-                transferRequest.getSourceAccountNumber(),
-                getStartOfMonth(),
-                getEndOfMonth()
-            )
-            .flatMap(transactionCount -> {
-                BigDecimal commission = (transactionCount >= MAX_FREE_TRANSACTIONS) ? COMMISSION_AMOUNT : BigDecimal.ZERO;
-                BigDecimal totalAmount = transferRequest.getAmount().add(commission);
+        return transactionConfigCacheService.getConfig()
+            .switchIfEmpty(Mono.error(new IllegalStateException("Transaction configuration not found in cache")))
+            .flatMap(config -> 
+                transactionRepository.countByAccountNumberAndTransactionDateBetween(
+                    transferRequest.getSourceAccountNumber(),
+                    getStartOfMonth(),
+                    getEndOfMonth()
+                ).flatMap(transactionCount -> {
+                    BigDecimal commission = (transactionCount >= config.getMaxFreeTransactions())
+                            ? config.getCommissionAmount()
+                            : BigDecimal.ZERO;
+                    BigDecimal totalAmount = transferRequest.getAmount().add(commission);
 
-                // Obtener cuentas origen y destino
-                Mono<AccountResponse> sourceAccountMono = webClient
-                        .get()
-                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transferRequest.getSourceAccountNumber())
-                        .retrieve()
-                        .bodyToMono(AccountResponse.class);
+                    // Obtener cuentas origen y destino
+                    Mono<AccountResponse> sourceAccountMono = webClient
+                            .get()
+                            .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transferRequest.getSourceAccountNumber())
+                            .retrieve()
+                            .bodyToMono(AccountResponse.class);
 
-                Mono<AccountResponse> destinationAccountMono = webClient
-                        .get()
-                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transferRequest.getDestinationAccountNumber())
-                        .retrieve()
-                        .bodyToMono(AccountResponse.class);
+                    Mono<AccountResponse> destinationAccountMono = webClient
+                            .get()
+                            .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", transferRequest.getDestinationAccountNumber())
+                            .retrieve()
+                            .bodyToMono(AccountResponse.class);
 
-                return Mono.zip(sourceAccountMono, destinationAccountMono)
-                    .flatMap(tuple -> {
-                        AccountResponse sourceAccount = tuple.getT1();
-                        AccountResponse destinationAccount = tuple.getT2();
+                    return Mono.zip(sourceAccountMono, destinationAccountMono)
+                        .flatMap(tuple -> {
+                            AccountResponse sourceAccount = tuple.getT1();
+                            AccountResponse destinationAccount = tuple.getT2();
 
-                        if (sourceAccount.getBalance().compareTo(totalAmount) < 0) {
-                            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds in source account"));
-                        }
+                            if (sourceAccount.getBalance().compareTo(totalAmount) < 0) {
+                                return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds in source account"));
+                            }
 
-                        // Actualizar saldos
-                        sourceAccount.setBalance(sourceAccount.getBalance().subtract(totalAmount));
-                        destinationAccount.setBalance(destinationAccount.getBalance().add(transferRequest.getAmount()));
+                            // Actualizar saldos
+                            sourceAccount.setBalance(sourceAccount.getBalance().subtract(totalAmount));
+                            destinationAccount.setBalance(destinationAccount.getBalance().add(transferRequest.getAmount()));
 
-                        // Actualizar cuentas
-                        return webClient
-                                .put()
-                                .uri(ACCOUNT_SERVICE_URL + "/{id}", sourceAccount.getId())
-                                .bodyValue(sourceAccount)
-                                .retrieve()
-                                .bodyToMono(AccountResponse.class)
-                                .flatMap(updatedSource -> webClient
+                            // Actualizar cuentas
+                            return webClient
                                     .put()
-                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", destinationAccount.getId())
-                                    .bodyValue(destinationAccount)
+                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", sourceAccount.getId())
+                                    .bodyValue(sourceAccount)
                                     .retrieve()
                                     .bodyToMono(AccountResponse.class)
-                                )
-                                .flatMap(updatedDestination -> {
-                                    Transaction transaction = new Transaction();
-                                    transaction.setProductType("ACCOUNT");
-                                    transaction.setTransactionType(TransactionType.TRANSFER);
-                                    transaction.setAmount(transferRequest.getAmount());
-                                    transaction.setSourceAccountNumber(transferRequest.getSourceAccountNumber());
-                                    transaction.setDestinationAccountNumber(transferRequest.getDestinationAccountNumber());
-                                    transaction.setTransactionDate(LocalDate.now());
-                                    transaction.setCommission(commission);
-                                    
+                                    .flatMap(updatedSource -> webClient
+                                        .put()
+                                        .uri(ACCOUNT_SERVICE_URL + "/{id}", destinationAccount.getId())
+                                        .bodyValue(destinationAccount)
+                                        .retrieve()
+                                        .bodyToMono(AccountResponse.class)
+                                    )
+                                    .flatMap(updatedDestination -> {
+                                        Transaction transaction = new Transaction();
+                                        transaction.setProductType("ACCOUNT");
+                                        transaction.setTransactionType(TransactionType.TRANSFER);
+                                        transaction.setAmount(transferRequest.getAmount());
+                                        transaction.setSourceAccountNumber(transferRequest.getSourceAccountNumber());
+                                        transaction.setDestinationAccountNumber(transferRequest.getDestinationAccountNumber());
+                                        transaction.setTransactionDate(LocalDate.now());
+                                        transaction.setCommission(commission);
 
-                                    return transactionRepository.save(transaction)
-                                            .map(savedTransaction -> new TransactionResponse(
-                                                    savedTransaction.getId(),
-                                                    savedTransaction.getAccountNumber(),
-                                                    savedTransaction.getTransactionType(),
-                                                    savedTransaction.getProductType(),
-                                                    savedTransaction.getAmount(),
-                                                    savedTransaction.getTransactionDate(),
-                                                    savedTransaction.getCommission(),
-                                                    savedTransaction.getSourceAccountNumber(),
-                                                    savedTransaction.getDestinationAccountNumber(),
-                                                    savedTransaction.getCardNumber()
-                                            ));
-                                });
-                    });
-            });
+                                        return transactionRepository.save(transaction)
+                                                .map(savedTransaction -> new TransactionResponse(
+                                                        savedTransaction.getId(),
+                                                        savedTransaction.getAccountNumber(),
+                                                        savedTransaction.getTransactionType(),
+                                                        savedTransaction.getProductType(),
+                                                        savedTransaction.getAmount(),
+                                                        savedTransaction.getTransactionDate(),
+                                                        savedTransaction.getCommission(),
+                                                        savedTransaction.getSourceAccountNumber(),
+                                                        savedTransaction.getDestinationAccountNumber(),
+                                                        savedTransaction.getCardNumber()
+                                                ));
+                                    });
+                        });
+                })
+            );
     }
     
     @Override
@@ -498,61 +508,68 @@ public class TransactionServiceImpl implements TransactionService{
 	public Mono<TransactionResponse> payWithDebitCard(DebitCardPaymentRequest request) {
 		WebClient webClient = webClientBuilder.build();
 
-	    return webClient.get()
-	        .uri(DEBIT_SERVICE_URL + "/{cardNumber}", request.getCardNumber())
-	        .retrieve()
-	        .bodyToMono(DebitCardDTO.class)
-	        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Debit card not found")))
-	        .flatMapMany(card -> Flux.fromIterable(card.getAccountNumbers())) // ← Cambiamos a múltiples cuentas
-	        .concatMap(accountNumber ->
+	    return transactionConfigCacheService.getConfig()
+	        .switchIfEmpty(Mono.error(new IllegalStateException("Transaction configuration not found in cache")))
+	        .flatMapMany(config -> 
 	            webClient.get()
-	                .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", accountNumber)
+	                .uri(DEBIT_SERVICE_URL + "/{cardNumber}", request.getCardNumber())
 	                .retrieve()
-	                .bodyToMono(AccountResponse.class)
-	                .flatMap(account -> {
-	                    return transactionRepository.countByAccountNumberAndTransactionDateBetween(
-	                                account.getAccountNumber(), getStartOfMonth(), getEndOfMonth())
-	                        .flatMap(txCount -> {
-	                            BigDecimal commission = txCount >= MAX_FREE_TRANSACTIONS ? COMMISSION_AMOUNT : BigDecimal.ZERO;
-	                            BigDecimal total = request.getAmount().add(commission);
+	                .bodyToMono(DebitCardDTO.class)
+	                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "Debit card not found")))
+	                .flatMapMany(card -> Flux.fromIterable(card.getAccountNumbers()))
+	                .concatMap(accountNumber ->
+	                    webClient.get()
+	                        .uri(ACCOUNT_SERVICE_URL + "/by-account-number/{accountNumber}", accountNumber)
+	                        .retrieve()
+	                        .bodyToMono(AccountResponse.class)
+	                        .flatMap(account -> 
+	                            transactionRepository.countByAccountNumberAndTransactionDateBetween(
+	                                    account.getAccountNumber(), getStartOfMonth(), getEndOfMonth())
+	                                .flatMap(txCount -> {
+	                                    BigDecimal commission = txCount >= config.getMaxFreeTransactions() 
+	                                        ? config.getCommissionAmount() 
+	                                        : BigDecimal.ZERO;
+	                                    BigDecimal total = request.getAmount().add(commission);
 
-	                            if (account.getBalance().compareTo(total) >= 0) {
-	                                account.setBalance(account.getBalance().subtract(total));
-	                                return webClient.put()
-	                                    .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
-	                                    .bodyValue(account)
-	                                    .retrieve()
-	                                    .bodyToMono(AccountResponse.class)
-	                                    .flatMap(updatedAccount -> {
-	                                        Transaction tx = Transaction.builder()
-	                                                .accountNumber(account.getAccountNumber())
-	                                                .transactionType(TransactionType.DEBIT_CARD_PAYMENT)
-	                                                .productType("ACCOUNT")
-	                                                .amount(request.getAmount())
-	                                                .commission(commission)
-	                                                .transactionDate(LocalDate.now())
-	                                                .cardNumber(request.getCardNumber())
-	                                                .build();
+	                                    if (account.getBalance().compareTo(total) >= 0) {
+	                                        account.setBalance(account.getBalance().subtract(total));
+	                                        return webClient.put()
+	                                            .uri(ACCOUNT_SERVICE_URL + "/{id}", account.getId())
+	                                            .bodyValue(account)
+	                                            .retrieve()
+	                                            .bodyToMono(AccountResponse.class)
+	                                            .flatMap(updatedAccount -> {
+	                                                Transaction tx = Transaction.builder()
+	                                                        .accountNumber(account.getAccountNumber())
+	                                                        .transactionType(TransactionType.DEBIT_CARD_PAYMENT)
+	                                                        .productType("ACCOUNT")
+	                                                        .amount(request.getAmount())
+	                                                        .commission(commission)
+	                                                        .transactionDate(LocalDate.now())
+	                                                        .cardNumber(request.getCardNumber())
+	                                                        .build();
 
-	                                        return transactionRepository.save(tx)
-	                                            .map(saved -> new TransactionResponse(
-	                                                    saved.getId(),
-	                                                    saved.getAccountNumber(),
-	                                                    saved.getTransactionType(),
-	                                                    saved.getProductType(),
-	                                                    saved.getAmount(),
-	                                                    saved.getTransactionDate(),
-	                                                    saved.getCommission(),
-	                                                    saved.getSourceAccountNumber(),
-	                                                    saved.getDestinationAccountNumber(),
-	                                                    saved.getCardNumber()));
-	                                    });
-	                            } else {
-	                                return Mono.empty(); // no tiene saldo, pasamos a la siguiente
-	                            }
-	                        });
-	                }))
-	        .next() // Tomamos solo la primera cuenta que haya podido pagar
+	                                                return transactionRepository.save(tx)
+	                                                    .map(saved -> new TransactionResponse(
+	                                                            saved.getId(),
+	                                                            saved.getAccountNumber(),
+	                                                            saved.getTransactionType(),
+	                                                            saved.getProductType(),
+	                                                            saved.getAmount(),
+	                                                            saved.getTransactionDate(),
+	                                                            saved.getCommission(),
+	                                                            saved.getSourceAccountNumber(),
+	                                                            saved.getDestinationAccountNumber(),
+	                                                            saved.getCardNumber()));
+	                                            });
+	                                    } else {
+	                                        return Mono.empty(); // No tiene saldo, pasamos a la siguiente cuenta
+	                                    }
+	                                })
+	                        )
+	                )
+	        )
+	        .next()
 	        .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Insufficient funds in all linked accounts")));
 	}
 
