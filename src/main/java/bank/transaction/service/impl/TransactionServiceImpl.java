@@ -26,16 +26,22 @@ import bank.transaction.dto.TransactionResponse;
 import bank.transaction.dto.TransferRequest;
 import bank.transaction.entity.Transaction;
 import bank.transaction.entity.TransactionType;
+import bank.transaction.event.WalletEvent;
 import bank.transaction.repository.TransactionRepository;
+import bank.transaction.repository.WalletRepository;
 import bank.transaction.service.TransactionConfigCacheService;
 import bank.transaction.service.TransactionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class TransactionServiceImpl implements TransactionService{
 	
 	@Autowired
@@ -46,8 +52,13 @@ public class TransactionServiceImpl implements TransactionService{
 	//en el metodo, paycredit, falta implementar la actualizacion de la cuenta de credito,validar
 	private static final String CREDIT_SERVICE_URL = "http://localhost:8022/loans";
 	
+	private final AccountServiceClient accountServiceClient;
+	
 	@Autowired
     private TransactionRepository transactionRepository;
+	
+	@Autowired
+    private WalletRepository walletRepository;
 	
 	@Autowired
 	private TransactionConfigCacheService transactionConfigCacheService;
@@ -636,4 +647,70 @@ public class TransactionServiceImpl implements TransactionService{
 	    }
 	}
     
+	@Override
+	public void registerYankiLoad(WalletEvent event) {
+		Transaction transaction = new Transaction();
+        
+        transaction.setCardNumber(event.getWallet().getLinkedDebitCardNumber()); // N° de tarjeta asociada
+        transaction.setAmount(event.getAmount());
+        transaction.setTransactionType(TransactionType.DEPOSIT); // DEPOSIT cargar dinero
+        transaction.setProductType("ACCOUNT"); // Estamos cargando desde una cuenta
+        transaction.setTransactionDate(LocalDate.now());
+        transaction.setDescription("Load from debit card to yanki wallet");
+
+        transactionRepository.save(transaction)
+            .doOnSuccess(saved -> log.info("YANKI_LOAD transaction saved: {}", saved))
+            .subscribe();
+    }
+
+	@Override
+	public void processLoadFromCard(WalletEvent event) {
+		log.info("Procesando carga desde tarjeta de débito para evento: {}", event);
+		Transaction transaction = Transaction.builder()
+                .transactionType(TransactionType.LOAD_FROM_CARD)
+                .phoneNumber(event.getFromPhoneNumber())
+                .amount(event.getAmount())
+                .cardNumber(event.getDebitCardNumber())
+                .transactionDate(LocalDate.now())
+                .build();
+
+        transactionRepository.save(transaction)
+                .doOnSuccess(t -> log.info("Transacción guardada: {}", t))
+                .doOnError(e -> log.error("Error guardando transacción", e))
+                .subscribe();
+        
+     // Descontar saldo de la cuenta bancaria principal
+        accountServiceClient.getDebitCardByNumber(event.getDebitCardNumber())
+            .flatMap(debitCardDto -> {
+                String mainAccountNumber = debitCardDto.getAccountNumbers().get(0); // Primera cuenta asociada
+                return accountServiceClient.getAccountByNumber(mainAccountNumber);
+            })
+            .flatMap(accountResponse -> {
+                BigDecimal newBalance = accountResponse.getBalance().subtract(event.getAmount());
+                if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
+                    return Mono.error(new RuntimeException("Saldo insuficiente en cuenta principal"));
+                }
+                accountResponse.setBalance(newBalance);
+                return accountServiceClient.updateAccount(accountResponse);
+            })
+            .subscribe(
+                updatedAccount -> log.info("Cuenta actualizada correctamente: {}", updatedAccount),
+                error -> log.error("Error al actualizar la cuenta: {}", error.getMessage())
+            );
+        
+        // 3. Aumentar saldo en Wallet
+        walletRepository.findByPhoneNumber(event.getFromPhoneNumber())
+            .flatMap(wallet -> {
+                BigDecimal newWalletBalance = wallet.getBalance().add(event.getAmount());
+                wallet.setBalance(newWalletBalance);
+                return walletRepository.save(wallet);
+            })
+            .doOnSuccess(updatedWallet -> log.info("Wallet actualizado correctamente: {}", updatedWallet))
+            .doOnError(error -> log.error("Error al actualizar el Wallet", error))
+            .subscribe();
+        
+	}
+	
+	
+	
 }

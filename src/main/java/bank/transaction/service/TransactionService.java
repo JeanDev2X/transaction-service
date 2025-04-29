@@ -11,6 +11,7 @@ import bank.transaction.dto.TransactionRequest;
 import bank.transaction.dto.TransactionResponse;
 import bank.transaction.dto.TransferRequest;
 import bank.transaction.entity.Transaction;
+import bank.transaction.event.WalletEvent;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -30,4 +31,6 @@ public interface TransactionService {
     public Mono<TransactionResponse> payWithDebitCard(DebitCardPaymentRequest request);
     Flux<TransactionDTO> getLastMovementsByCardNumbers(List<String> cardNumbers);
     Mono<Transaction> processCreditPayment(CreditPaymentRequest request);
+    public void registerYankiLoad(WalletEvent event);
+    void processLoadFromCard(WalletEvent event);
 }
