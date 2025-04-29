@@ -1,5 +1,6 @@
 package bank.transaction.dto;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import lombok.AllArgsConstructor;
@@ -16,4 +17,5 @@ public class DebitCardDTO {
     private List<String> accountNumbers; // ← actualizado, cuentas asociadas
     private String description;
     private String customerDocumentNumber; // opcional si quieres devolverlo también
+    private BigDecimal balance;//saldo
 }
