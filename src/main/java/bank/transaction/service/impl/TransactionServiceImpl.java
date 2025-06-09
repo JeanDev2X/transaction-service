@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
 
+import bank.transaction.config.YankiServiceClient;
 import bank.transaction.dto.AccountResponse;
 import bank.transaction.dto.CommissionReportResponse;
 import bank.transaction.dto.CreditCardResponse;
@@ -28,7 +29,6 @@ import bank.transaction.entity.Transaction;
 import bank.transaction.entity.TransactionType;
 import bank.transaction.event.WalletEvent;
 import bank.transaction.repository.TransactionRepository;
-import bank.transaction.repository.WalletRepository;
 import bank.transaction.service.TransactionConfigCacheService;
 import bank.transaction.service.TransactionService;
 import lombok.RequiredArgsConstructor;
@@ -54,11 +54,10 @@ public class TransactionServiceImpl implements TransactionService{
 	
 	private final AccountServiceClient accountServiceClient;
 	
-	@Autowired
-    private TransactionRepository transactionRepository;
+	private final YankiServiceClient yankiServiceClient;
 	
 	@Autowired
-    private WalletRepository walletRepository;
+    private TransactionRepository transactionRepository;
 	
 	@Autowired
 	private TransactionConfigCacheService transactionConfigCacheService;
@@ -699,15 +698,16 @@ public class TransactionServiceImpl implements TransactionService{
             );
         
         // 3. Aumentar saldo en Wallet
-        walletRepository.findByPhoneNumber(event.getFromPhoneNumber())
-            .flatMap(wallet -> {
-                BigDecimal newWalletBalance = wallet.getBalance().add(event.getAmount());
-                wallet.setBalance(newWalletBalance);
-                return walletRepository.save(wallet);
-            })
-            .doOnSuccess(updatedWallet -> log.info("Wallet actualizado correctamente: {}", updatedWallet))
-            .doOnError(error -> log.error("Error al actualizar el Wallet", error))
-            .subscribe();
+        yankiServiceClient.getWalletByPhoneNumber(event.getFromPhoneNumber())
+        .switchIfEmpty(Mono.error(new RuntimeException("Wallet no encontrado para número: " + event.getFromPhoneNumber())))
+        .flatMap(wallet -> {
+            BigDecimal newWalletBalance = wallet.getBalance().add(event.getAmount());
+            wallet.setBalance(newWalletBalance);
+            return yankiServiceClient.updateWallet(wallet);
+        })
+        .doOnSuccess(updatedWallet -> log.info("Wallet actualizado correctamente: {}", updatedWallet))
+        .doOnError(error -> log.error("Error al actualizar el Wallet", error))
+        .subscribe();
         
 	}
 	
